@@ -1,0 +1,725 @@
+#usda 1.0
+(
+    customLayerData = {
+        dictionary cameraSettings = {
+            dictionary Front = {
+                double3 position = (5, 0, 0)
+                double radius = 5
+            }
+            dictionary Perspective = {
+                double3 position = (0.4301088012902359, -0.10696755887997873, 0.21655991733552826)
+                double3 target = (-0.08502824158045708, 0.1861152858729785, 0.05129772060211896)
+            }
+            dictionary Right = {
+                double3 position = (0, -5, 0)
+                double radius = 5
+            }
+            dictionary Top = {
+                double3 position = (0, 0, 5)
+                double radius = 5
+            }
+            string boundCamera = "/OmniverseKit_Persp"
+        }
+        dictionary omni_layer = {
+            string authoring_layer = "./xhand_right.usda"
+            dictionary locked = {
+            }
+            dictionary muteness = {
+            }
+        }
+        dictionary renderSettings = {
+        }
+    }
+    defaultPrim = "World"
+    endTimeCode = 1000000
+    metersPerUnit = 1
+    startTimeCode = 0
+    timeCodesPerSecond = 60
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    over "xhand_right" (
+        prepend references = @./urdf/xhand_right/xhand_right.usd@
+    )
+    {
+        string isaac:namespace (
+            displayName = "Namespace"
+            doc = "Namespace of the prim in Isaac Sim"
+        )
+
+        over "right_hand_index_rota_tip"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+
+            over "visuals" (
+                active = true
+            )
+            {
+                over "right_hand_index_rota_tip" (
+                    active = false
+                )
+                {
+                }
+            }
+
+            over "collisions" (
+                active = true
+            )
+            {
+                over "right_hand_index_rota_tip" (
+                    active = false
+                )
+                {
+                }
+            }
+
+            def Xform "right_hand_index_rota_tip_xform" (
+                active = true
+            )
+            {
+                quatd xformOp:orient = (1, 0, 0, 0)
+                double3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        over "right_hand_mid_tip" (
+            active = true
+        )
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+
+            over "visuals" (
+                active = true
+            )
+            {
+            }
+
+            over "collisions" (
+                active = true
+            )
+            {
+            }
+
+            def Xform "right_hand_mid_tip_xform"
+            {
+                quatd xformOp:orient = (1, 0, 0, 0)
+                double3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        over "right_hand_mid_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_pinky_tip"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+
+            over "visuals" (
+                active = true
+            )
+            {
+            }
+
+            over "collisions" (
+                active = true
+            )
+            {
+            }
+
+            def Xform "right_hand_pinky_tip_xform"
+            {
+                quatd xformOp:orient = (1, 0, 0, 0)
+                double3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        over "right_hand_ring_tip"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+
+            over "visuals" (
+                active = true
+            )
+            {
+            }
+
+            over "collisions" (
+                active = true
+            )
+            {
+            }
+
+            def Xform "right_hand_ring_tip_xform"
+            {
+                quatd xformOp:orient = (1, 0, 0, 0)
+                double3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        over "right_hand_thumb_rota_tip"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+
+            over "visuals" (
+                active = true
+            )
+            {
+            }
+
+            over "collisions" (
+                active = true
+            )
+            {
+            }
+
+            def Xform "right_hand_thumb_rota_tip_xform"
+            {
+                quatd xformOp:orient = (1, 0, 0, 0)
+                double3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        over "right_hand_ring_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_thumb_rotaback_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_thumb_rota_link1"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_thumb_bend_link"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "joints"
+        {
+            over "right_hand_back_joint" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_ee_joint" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_index_joint1" (
+                prepend apiSchemas = ["PhysxDrivePerformanceEnvelopeAPI:angular"]
+                displayName = "right_hand_index_joint1"
+            )
+            {
+                float drive:angular:physics:damping = 0.00363
+                float drive:angular:physics:stiffness = 0.11557
+                string isaac:nameOverride = "" (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxDrivePerformanceEnvelope:angular:maxActuatorVelocity = 400
+                float physxJoint:armature = 0.00265
+                float physxJoint:jointFriction = 0.104
+            }
+
+            over "right_hand_index_rota_joint3" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_index_rotaback_joint2" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_index_rotaback_joint1" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_mid_joint3" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_midback_joint2" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_midback_joint1" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_pinky_joint3" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_pinkyback_joint2" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_pinkyback_joint1" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_ring_joint3" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_ringback_joint2" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_thumb_bend_joint" (
+                prepend apiSchemas = ["PhysxDrivePerformanceEnvelopeAPI:angular"]
+                displayName = "right_hand_thumb_bend_joint"
+            )
+            {
+                float drive:angular:physics:damping = 0.0078826
+                float drive:angular:physics:maxForce = 1.1
+                float drive:angular:physics:stiffness = 0.2304
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxDrivePerformanceEnvelope:angular:maxActuatorVelocity = 494
+                float physxJoint:armature = 0.0032
+                float physxJoint:jointFriction = 0.132
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_ringback_joint1" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_thumb_rota_joint3" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_thumb_rotaback_joint2" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_thumb_rotaback_joint1" (
+                active = true
+            )
+            {
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+            }
+
+            over "right_hand_mid_joint1" (
+                displayName = "right_hand_mid_joint1"
+            )
+            {
+                float drive:angular:physics:damping = 0.00363
+                float drive:angular:physics:stiffness = 0.11557
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00265
+                float physxJoint:jointFriction = 0.104
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_index_bend_joint" (
+                prepend apiSchemas = ["PhysxDrivePerformanceEnvelopeAPI:angular"]
+                displayName = "right_hand_index_bend_joint"
+            )
+            {
+                float drive:angular:physics:damping = 0.00319
+                float drive:angular:physics:stiffness = 0.083078
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxDrivePerformanceEnvelope:angular:maxActuatorVelocity = 400
+                float physxJoint:armature = 0.00265
+                float physxJoint:jointFriction = 0.104
+            }
+
+            over "right_hand_thumb_rota_joint1" (
+                displayName = "right_hand_thumb_rota_joint1"
+            )
+            {
+                float drive:angular:physics:damping = 0.0042
+                float drive:angular:physics:stiffness = 0.1213
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.0032
+                float physxJoint:jointFriction = 0.132
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_thumb_rota_joint2"
+            {
+                float drive:angular:physics:damping = 0.00319
+                float drive:angular:physics:stiffness = 0.083
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00265
+                float physxJoint:jointFriction = 0.104
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_index_joint2" (
+                displayName = "right_hand_index_joint2"
+            )
+            {
+                float drive:angular:physics:damping = 0.000698
+                float drive:angular:physics:stiffness = 0.01584
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00061
+                float physxJoint:jointFriction = 0.02476
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_mid_joint2" (
+                displayName = "right_hand_mid_joint2"
+            )
+            {
+                float drive:angular:physics:damping = 0.0007
+                float drive:angular:physics:stiffness = 0.01584
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00061
+                float physxJoint:jointFriction = 0.02476
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_pinky_joint1" (
+                displayName = "right_hand_pinky_joint1"
+            )
+            {
+                float drive:angular:physics:damping = 0.00363
+                float drive:angular:physics:stiffness = 0.11557
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00265
+                float physxJoint:jointFriction = 0.104
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_ring_joint1" (
+                displayName = "right_hand_ring_joint1"
+            )
+            {
+                float drive:angular:physics:damping = 0.00363
+                float drive:angular:physics:stiffness = 0.11557
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00265
+                float physxJoint:jointFriction = 0.104
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_pinky_joint2" (
+                displayName = "right_hand_pinky_joint2"
+            )
+            {
+                float drive:angular:physics:damping = 0.0007
+                float drive:angular:physics:stiffness = 0.01584
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00061
+                float physxJoint:jointFriction = 0.02476
+                float physxJoint:maxJointVelocity = 400
+            }
+
+            over "right_hand_ring_joint2" (
+                displayName = "right_hand_ring_joint2"
+            )
+            {
+                float drive:angular:physics:damping = 0.0007
+                float drive:angular:physics:stiffness = 0.01584
+                string isaac:nameOverride (
+                    displayName = "Name Override"
+                    doc = "Name override for prim lookup in base name search"
+                )
+                float physxJoint:armature = 0.00061
+                float physxJoint:jointFriction = 0.02476
+                float physxJoint:maxJointVelocity = 400
+            }
+        }
+
+        over "right_hand_thumb_rota_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_ringback_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_pinkyback_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+
+        over "right_hand_index_rota_link2"
+        {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+        }
+    }
+}
+
+def Xform "Environment"
+{
+    quatd xformOp:orient = (1, 0, 0, 0)
+    double3 xformOp:scale = (1, 1, 1)
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+    def DistantLight "defaultLight" (
+        prepend apiSchemas = ["ShapingAPI"]
+    )
+    {
+        float inputs:angle = 1
+        float inputs:intensity = 3000
+        float inputs:shaping:cone:angle = 180
+        float inputs:shaping:cone:softness
+        float inputs:shaping:focus
+        color3f inputs:shaping:focusTint
+        asset inputs:shaping:ies:file
+        quatd xformOp:orient = (0.6532814824381883, 0.2705980500730985, 0.27059805007309845, 0.6532814824381882)
+        double3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+    }
+}
+
+def "Render" (
+    hide_in_stage_window = true
+    no_delete = true
+)
+{
+    def "OmniverseKit"
+    {
+        def "HydraTextures" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            def RenderProduct "omni_kit_widget_viewport_ViewportTexture_0" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </OmniverseKit_Persp>
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                bool omni:rtx:pt:lightcache:cached:dontResolveConflicts = 1
+                int omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                uint omni:rtx:viewTile:limit = 4294967295
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+        }
+    }
+
+    def RenderSettings "OmniverseGlobalRenderSettings" (
+        prepend apiSchemas = ["OmniRtxSettingsGlobalRtAdvancedAPI_1", "OmniRtxSettingsGlobalPtAdvancedAPI_1"]
+        no_delete = true
+    )
+    {
+        rel products = </Render/OmniverseKit/HydraTextures/omni_kit_widget_viewport_ViewportTexture_0>
+    }
+
+    def "Vars"
+    {
+        def RenderVar "LdrColor" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            uniform string sourceName = "LdrColor"
+        }
+    }
+}
+
+def PhysicsScene "physicsScene" (
+    prepend apiSchemas = ["PhysxSceneAPI"]
+)
+{
+}
+

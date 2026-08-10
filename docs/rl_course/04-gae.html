@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>04 · 广义优势估计 GAE</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 04 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 04 · 这一步到底好不好</div>
+  <h1>广义优势估计 GAE</h1>
+  <p class="sub">奖励常常姗姗来迟。GAE 用一个旋钮 λ，在"看一步"与"看到底"之间优雅地平滑过渡。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<h2 id="credit">一、信用分配难题</h2>
+<div class="intuition">
+你下了一盘棋，第 40 步赢了。可真正的好棋也许是第 12 步埋的伏笔。<strong>奖励来得晚，怎么知道该表扬哪一步？</strong> 这叫"信用分配（credit assignment）"问题。<br>
+第 01 章我们定义了优势 $A=Q-V$："这一步比平均好多少"。但 $Q$ 和 $V$ 我们都不知道真值，只能<strong>估计</strong>。GAE 就是一种又准又稳的优势估计法。
+</div>
+
+<h2 id="td">二、积木：TD 误差 δ</h2>
+<p>回忆第 01 章的贝尔曼递归 $V(s_t)=r_t+\gamma V(s_{t+1})$。如果我们的价值估计 $V$ 完全准确，这个等式应当成立。两边之差就是<strong>时序差分误差（TD error）</strong>：</p>
+<div class="math-block">
+$$\delta_t \;=\; \underbrace{r_t + \gamma\, V(s_{t+1})}_{\text{基于真实奖励的"新证据"}} \;-\; \underbrace{V(s_t)}_{\text{原本的预期}}.$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · TD 误差</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\delta_t$</td><td>第 $t$ 步的"惊喜值"。&gt;0 = 比预期好，&lt;0 = 比预期差。</td></tr>
+      <tr><td class="sym-col">$r_t$</td><td>第 $t$ 步真实拿到的即时奖励。</td></tr>
+      <tr><td class="sym-col">$V(s_t)$</td><td>Critic 对当前状态价值的估计。</td></tr>
+      <tr><td class="sym-col">$\gamma V(s_{t+1})$</td><td>折扣后的下一状态价值估计，作为"未来"的代理。</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="muted">$\delta_t$ 本身就是优势的一个<strong>一步估计</strong>——它只用了一步真实奖励，其余全靠 $V$ 来"脑补"。准，但短视。</p>
+
+<h2 id="mc-td">三、两个极端：蒙特卡洛 vs 一步 TD</h2>
+<table>
+  <thead><tr><th>方法</th><th>用多少真实奖励</th><th>偏差 bias</th><th>方差 variance</th></tr></thead>
+  <tbody>
+    <tr><td>一步 TD（只用 δ_t）</td><td>1 步</td><td><b>高</b>（严重依赖可能不准的 V）</td><td><b>低</b>（只含一步随机性）</td></tr>
+    <tr><td>蒙特卡洛（用到回合结束）</td><td>全部</td><td><b>低</b>（几乎不靠 V）</td><td><b>高</b>（累积了所有步的随机性）</td></tr>
+  </tbody>
+</table>
+<div class="intuition">
+一步 TD 像"只看眼前一步就下判断"——稳，但容易被不准的预估带偏（偏差大）。蒙特卡洛像"等到尘埃落定再算总账"——不偏，但运气成分太重，每次差很多（方差大）。<strong>我们想要中间地带</strong>，GAE 给的正是一个连续可调的中间地带。
+</div>
+
+<h2 id="gae">四、GAE：把不同步长的估计指数加权</h2>
+<p>GAE 的思想：把"看 1 步、看 2 步、看 3 步……"的各种估计，用一个衰减系数 $\lambda$ 加权平均。最终结论惊人地简洁——它等于<strong>未来所有 TD 误差的 $(\gamma\lambda)$ 指数加权和</strong>：</p>
+<div class="math-block">
+$$\boxed{\;\hat A_t^{\text{GAE}} \;=\; \sum_{l=0}^{\infty} (\gamma\lambda)^{l}\,\delta_{t+l}
+\;=\; \delta_t + (\gamma\lambda)\delta_{t+1} + (\gamma\lambda)^2\delta_{t+2} + \cdots\;}$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · GAE</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\hat A_t$</td><td>第 $t$ 步优势的 GAE 估计。</td></tr>
+      <tr><td class="sym-col">$\lambda\in[0,1]$</td><td>GAE 的核心旋钮（代码里叫 <code>tau</code>，本项目 = 0.95）。</td></tr>
+      <tr><td class="sym-col">$\gamma$</td><td>折扣因子（0.99）。注意权重是 $\gamma$ 和 $\lambda$ 的<b>乘积</b>。</td></tr>
+      <tr><td class="sym-col">$l$</td><td>向未来看的步数偏移。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>两个极端一眼可见：</p>
+<ul>
+  <li>$\lambda = 0$：只剩 $\hat A_t = \delta_t$ → 退化成<strong>一步 TD</strong>（低方差、高偏差）。</li>
+  <li>$\lambda = 1$：$\hat A_t = \sum_l \gamma^l \delta_{t+l}$，望远镜拉满 → 等价于<strong>蒙特卡洛</strong>（低偏差、高方差）。</li>
+</ul>
+<p>本项目取 $\lambda=0.95$：偏向蒙特卡洛但仍压住方差，是实践中的黄金默认值。</p>
+
+<h3 id="recursive">从级数到递归（代码就靠这一步）</h3>
+<p>无穷级数没法直接算，但它有个漂亮的递归结构。把第一项拆出来：</p>
+<div class="math-block">
+$$\hat A_t = \delta_t + (\gamma\lambda)\big[\delta_{t+1} + (\gamma\lambda)\delta_{t+2}+\cdots\big]
+= \delta_t + \gamma\lambda\,\hat A_{t+1}.$$
+</div>
+<p>于是只要<strong>从最后一步往前倒推</strong>，一遍就能算完所有 $\hat A_t$。这正是代码里 <code>computer_return</code> 的 <code>reversed(range(...))</code>：</p>
+
+<span class="code-cap">experience.py · computer_return（GAE 反向递推）</span>
+<pre><code class="lang-py">last_gae_lam = 0
+for t in reversed(range(self.transitions_per_env)):
+    next_values = last_values if t == T-1 else self.storage_dict['values'][t+1]
+    next_nonterminal = 1.0 - self.storage_dict['dones'].float()[t]   # 终止则截断未来
+    delta = rewards[t] + gamma * next_values * next_nonterminal - values[t]
+    mb_advs[t] = last_gae_lam = delta + gamma * tau * next_nonterminal * last_gae_lam
+    returns[t] = mb_advs[t] + values[t]      # 回报 = 优势 + 价值基线</code></pre>
+
+<div class="note">
+<b>那个 <code>next_nonterminal</code> 是什么？</b> 它在回合<b>正常结束</b>（物体掉了）时 = 0，把"未来"一刀切断——因为掉了之后就没有未来价值可言了。这保证 GAE 不会跨越回合边界错误地"借用"下一局的奖励。
+</div>
+
+<h2 id="returns">五、回报、价值基线与优势标准化</h2>
+<p>有了优势，顺手就得到 Critic 的回归目标——<strong>回报（return）</strong>：</p>
+<div class="math-block">
+$$\hat R_t \;=\; \hat A_t + V(s_t).$$
+</div>
+<p>Critic 之后会被训练去拟合 $\hat R_t$（见<a href="05-ppo.html">第 05 章</a>的价值损失）。</p>
+
+<p>最后一步是把整批优势<strong>标准化</strong>（减均值、除标准差），让数值落在 0 附近、尺度统一，使梯度更新更稳：</p>
+<div class="math-block">
+$$\tilde A \;=\; \frac{\hat A - \operatorname{mean}(\hat A)}{\operatorname{std}(\hat A) + 10^{-8}}.$$
+</div>
+<span class="code-cap">experience.py · prepare_training</span>
+<pre><code class="lang-py">advantages = self.data_dict['returns'] - self.data_dict['values']
+self.data_dict['advantages'] = (advantages - advantages.mean()) / (advantages.std() + 1e-8)</code></pre>
+<p class="muted">加 $10^{-8}$ 防止除以零。标准化后，"比平均好"的动作优势为正、"比平均差"的为负，天然契合 PPO"好动作加概率、坏动作减概率"的逻辑。</p>
+
+<h2 id="bootstrap">六、超时不是失败：value bootstrap</h2>
+<div class="intuition">
+一局到了 20 秒时间上限被强制结束，但这时手可能转得正欢——这是"<strong>下课铃响了</strong>"，不是"做错了"。如果直接当作终止，会冤枉这个本来很好的状态。
+</div>
+<p>解决办法：对"超时"（time_out，而非真摔了）的那一步，把折扣后的价值估计<strong>补回奖励里</strong>，相当于告诉算法"后面其实还有价值，只是被下课打断了"：</p>
+<span class="code-cap">ppo.py · play_steps</span>
+<pre><code class="lang-py">shaped_rewards = 0.01 * rewards.clone()
+if self.value_bootstrap and 'time_outs' in infos:
+    shaped_rewards += self.gamma * res_dict['values'] * infos['time_outs'].unsqueeze(1).float()</code></pre>
+<p class="muted">（那个 <code>0.01</code> 是奖励缩放，把奖励整体调到适合学习的数量级。）</p>
+
+<h2 id="viz">七、动手：调 λ 与 γ，看优势怎么被"攒"出来</h2>
+
+<div class="viz">
+  <div class="viz-title">TD 误差的指数加权累积</div>
+  <div class="viz-sub">上排灰柱是各未来步的 TD 误差 δ；曲线是权重 (γλ)ˡ；下方数字是把它们加权求和得到的 Â₀。拖 λ 看望远镜伸缩。</div>
+  <canvas id="gaeCanvas"></canvas>
+  <div class="controls" id="gaeCtl"></div>
+  <div class="readout" id="gaeOut"></div>
+  <div style="margin-top:10px"><button class="btn ghost" id="gaeResample">换一组随机 δ</button></div>
+</div>
+
+<div class="viz">
+  <div class="viz-title">偏差—方差权衡</div>
+  <div class="viz-sub">λ 从 0 滑到 1：偏差下降、方差上升。红点是当前 λ 的位置，星标是本项目选的 0.95。</div>
+  <canvas id="bvCanvas"></canvas>
+  <div class="readout" id="bvOut"></div>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> TD 误差 δ 是积木，GAE 用 $(\gamma\lambda)^l$ 把它们加权成优势 $\hat A$；λ 在偏差与方差之间平滑调节（本项目 0.95）。反向递推一遍算完，回报 = 优势 + 价值，优势再标准化。万事俱备——下一章 PPO 终于要用这个优势来真正更新策略了。
+</div>
+
+<div class="pager">
+  <a href="03-gaussian-policy.html"><div class="dir">← 上一章</div><div class="ttl">03 · 高斯策略、对数概率与熵</div></a>
+  <a class="next" href="05-ppo.html"><div class="dir">下一章 →</div><div class="ttl">05 · PPO 核心算法</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 04 章</footer>
+
+<script>
+/* ---------- GAE 加权累积 ---------- */
+(function () {
+  const cv = document.getElementById('gaeCanvas');
+  const out = document.getElementById('gaeOut');
+  let ctx, lambda = 0.95, gamma = 0.99, N = 24;
+  let deltas = gen();
+  function gen(){ const a=[]; for(let i=0;i<N;i++) a.push((Math.random()*2-1)); a[0]=0.6; return a; }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 36, y: 18, w: W-56, h: H-54 };
+    const zeroY = box.y + box.h*0.55;
+    const bw = box.w / N;
+    // weights
+    const wts = deltas.map((d,l)=>Math.pow(gamma*lambda, l));
+    let A = 0; for (let l=0;l<N;l++) A += wts[l]*deltas[l];
+    const maxD = Math.max(1, ...deltas.map(Math.abs));
+    // delta bars
+    deltas.forEach((d,l)=>{
+      const x = box.x + l*bw;
+      const h = Math.abs(d)/maxD * (box.h*0.42);
+      ctx.fillStyle = d>=0 ? 'rgba(120,120,128,0.55)' : 'rgba(120,120,128,0.30)';
+      ctx.fillRect(x+1, d>=0?zeroY-h:zeroY, Math.max(1,bw-2), h);
+    });
+    // zero line
+    ctx.strokeStyle=T.faint; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(box.x, zeroY); ctx.lineTo(box.x+box.w, zeroY); ctx.stroke();
+    // weight curve (scaled to top region)
+    const pts=[]; for(let l=0;l<N;l++){ const x=box.x+(l+0.5)*bw; const y=box.y + (1-wts[l])* (box.h*0.42); pts.push([x,y]); }
+    Viz.plot(ctx, pts, T.accent, 2.5);
+    pts.forEach(p=>Viz.dot(ctx, p[0], p[1], 2.5, T.accent));
+    Viz.text(ctx, '权重 (γλ)ˡ', box.x+box.w, box.y+12, T.accent, '12px -apple-system', 'right');
+    Viz.text(ctx, 'TD 误差 δ', box.x+box.w, box.y+box.h+16, T.faint, '12px -apple-system', 'right');
+    Viz.text(ctx, '未来步 →', box.x+4, box.y+box.h+16, T.faint, '12px -apple-system', 'left');
+    // effective window
+    const kEff = (gamma*lambda<1)? 1/(1-gamma*lambda): N;
+    out.innerHTML = `λ=<b>${lambda.toFixed(2)}</b>, γ=<b>${gamma.toFixed(2)}</b> → 优势 Â₀ = Σ(γλ)ˡδ = <b>${A.toFixed(3)}</b>。有效"望远镜长度" ≈ <b>${Math.min(N,kEff).toFixed(0)}</b> 步。λ=0 时只看第一根柱子；λ=1 时望到最远。`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 240); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('gaeCtl');
+  Viz.slider(ctl, { label:'GAE λ', min:0, max:1, value:0.95, oninput:v=>{lambda=v;draw();} });
+  Viz.slider(ctl, { label:'折扣 γ', min:0.8, max:0.999, value:0.99, step:0.001, fmt:v=>(+v).toFixed(3), oninput:v=>{gamma=v;draw();} });
+  document.getElementById('gaeResample').addEventListener('click', ()=>{ deltas=gen(); draw(); });
+})();
+
+/* ---------- 偏差-方差权衡 ---------- */
+(function () {
+  const cv = document.getElementById('bvCanvas');
+  const out = document.getElementById('bvOut');
+  let ctx, lambda = 0.95;
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 46, y: 16, w: W-66, h: H-44 };
+    Viz.gridlines(ctx, box, 4, 3);
+    const X = l => box.x + l*box.w;
+    const Yb = v => box.y + box.h - v*box.h; // value 0..1
+    // bias decreasing (高 at λ=0)
+    const bias=[], varc=[];
+    for(let i=0;i<=100;i++){ const l=i/100; bias.push([X(l), Yb(1 - Math.pow(l,0.7))]); varc.push([X(l), Yb(0.08 + Math.pow(l,2.2)*0.92)]); }
+    Viz.plot(ctx, bias, T.orange, 2.5);
+    Viz.plot(ctx, varc, T.purple, 2.5);
+    Viz.text(ctx, '偏差 bias', box.x+box.w, Yb(0.12), T.orange, '12px -apple-system','right');
+    Viz.text(ctx, '方差 variance', box.x+box.w*0.5, box.y+10, T.purple, '12px -apple-system','center');
+    Viz.axes(ctx, box, { xlabel:'λ', ylabel:'误差量' });
+    // current + star at 0.95
+    const xs = X(0.95); ctx.fillStyle=T.green; ctx.font='16px sans-serif'; ctx.textAlign='center'; ctx.fillText('★', xs, box.y+box.h+0);
+    ctx.strokeStyle=T.red; ctx.setLineDash([4,4]); ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(X(lambda), box.y); ctx.lineTo(X(lambda), box.y+box.h); ctx.stroke(); ctx.setLineDash([]);
+    out.innerHTML = `λ=<b>${lambda.toFixed(2)}</b>。绿星 ★ 处（0.95）是本项目的选择：方差还没爆炸、偏差已经很低的"甜点"。（拖上方那组滑块里的 λ，此处红线会联动。）`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 200); draw(); }
+  Viz.onRedraw(init);
+  document.querySelectorAll('#gaeCtl input[type=range]')[0].addEventListener('input', e=>{ lambda=+e.target.value; draw(); });
+})();
+</script>
+</body>
+</html>

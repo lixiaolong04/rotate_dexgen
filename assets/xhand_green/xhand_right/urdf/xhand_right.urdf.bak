@@ -1,0 +1,3456 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="xhand_right">
+  <link
+    name="right_hand_link">
+    <inertial>
+      <origin
+        xyz="-0.0026201269451798 -2.14335705870185E-07 0.0149898163174635"
+        rpy="0 0 0" />
+      <mass
+        value="0.4135163" />
+      <inertia
+        ixx="0.00050072"
+        ixy="-0.00000695"
+        ixz="-0.00000619"
+        iyy="0.00037647"
+        iyz="-0.0000385"
+        izz="0.00020219" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.502 0.502 0.502 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="right_hand_ee_link">
+    <inertial>
+      <origin
+        xyz="-7.2756330243582E-17 -4.87109193722267E-18 -6.93889390390723E-18"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ee_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ee_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ee_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.055"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_ee_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_light_link">
+    <inertial>
+      <origin
+        xyz="-0.0183864898149234 8.1529355931437E-06 -0.0148987312955975"
+        rpy="0 0 0" />
+      <mass
+        value="0.00340472" />
+      <inertia
+        ixx="0.00000055"
+        ixy="0"
+        ixz="0"
+        iyy="0.00000009"
+        iyz="0"
+        izz="0.00000049" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_light_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.553 0.671 1.0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_light_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_light_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.055"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_light_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_dorsum_link">
+    <inertial>
+      <origin
+        xyz="-0.0120388119197629 -0.000367374442887451 0.00948330554055961"
+        rpy="0 0 0" />
+      <mass
+        value="0.02517469" />
+      <inertia
+        ixx="0.00003789"
+        ixy="-0.00000076"
+        ixz="0.00000098"
+        iyy="0.00001567"
+        iyz="-0.00000139"
+        izz="0.00002393" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_dorsum_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_dorsum_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_dorsum_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.055"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_dorsum_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_palm_link">
+    <inertial>
+      <origin
+        xyz="0.00799826407141385 0.0113310290374022 -0.00316113323382217"
+        rpy="0 0 0" />
+      <mass
+        value="0.02225639" />
+      <inertia
+        ixx="0.0000217"
+        ixy="0.00000171"
+        ixz="-0.00000001"
+        iyy="0.00001291"
+        iyz="0.00000026"
+        izz="0.0000108" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_palm_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_palm_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_palm_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.055"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_palm_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_mcp0_link">
+    <inertial>
+      <origin
+        xyz="0.00301003596008722 0.0112336071484651 0.000800179555045702"
+        rpy="0 0 0" />
+      <mass
+        value="0.00581743" />
+      <inertia
+        ixx="0.00000044"
+        ixy="-0.00000001"
+        ixz="-0.00000001"
+        iyy="0.00000034"
+        iyz="-0.00000007"
+        izz="0.00000043" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_mcp0_joint"
+    type="revolute">
+    <origin
+      xyz="0.020417 0.028872 0.035928"
+      rpy="0.61087 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_thumb_mcp0_link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="1.309"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_mcp1_link">
+    <inertial>
+      <origin
+        xyz="3.17292891876056E-06 0.0165207972508598 -0.00459987412899561"
+        rpy="0 0 0" />
+      <mass
+        value="0.07962914" />
+      <inertia
+        ixx="0.00001823"
+        ixy="-0.00000003"
+        ixz="-0.00000012"
+        iyy="0.00000568"
+        iyz="-0.00000060"
+        izz="0.00001596" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_mcp1_joint"
+    type="revolute">
+    <origin
+      xyz="0.0060305 0.022506 0.0055"
+      rpy="0 0 -0.2618" />
+    <parent
+      link="right_hand_thumb_mcp0_link" />
+    <child
+      link="right_hand_thumb_mcp1_link" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="0"
+      upper="1.745"
+      effort="0.884"
+      velocity="1.696" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_mcp1_back_link">
+    <inertial>
+      <origin
+        xyz="-1.24739148794559E-06 -0.0153920676472055 -0.0199604412109452"
+        rpy="0 0 0" />
+      <mass
+        value="0.00158811" />
+      <inertia
+        ixx="0.00000039"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000005"
+        iyz="0.00000000"
+        izz="0.00000042" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp1_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp1_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_mcp1_back_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.0345 0"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_mcp1_link" />
+    <child
+      link="right_hand_thumb_mcp1_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_pip_link">
+    <inertial>
+      <origin
+        xyz="3.42395610848038E-05 0.0221936774710458 -0.00361887235533728"
+        rpy="0 0 0" />
+      <mass
+        value="0.04158248" />
+      <inertia
+        ixx="0.00000576"
+        ixy="0.00000005"
+        ixz="0.00000001"
+        iyy="0.00000186"
+        iyz="0.00000017"
+        izz="0.00000561" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_pip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_pip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_pip_joint"
+    type="revolute">
+    <origin
+      xyz="0 0.0345 0"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_mcp1_link" />
+    <child
+      link="right_hand_thumb_pip_link" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.302"
+      velocity="1.98" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_pip_back_link">
+    <inertial>
+      <origin
+        xyz="-3.26679283033076E-05 -0.0136068037203619 -0.0111113866265571"
+        rpy="0 0 0" />
+      <mass
+        value="0.00131486" />
+      <inertia
+        ixx="0.00000020"
+        ixy="-0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000004"
+        iyz="0.00000000"
+        izz="0.00000021" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_pip_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_pip_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_pip_back_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.0374168958538642 -0.00450000000001719"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_pip_link" />
+    <child
+      link="right_hand_thumb_pip_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_dip_link">
+    <inertial>
+      <origin
+        xyz="2.71545140362664E-06 0.0156391609848761 -0.000426231493648253"
+        rpy="0 0 0" />
+      <mass
+        value="0.00650702" />
+      <inertia
+        ixx="0.00000049"
+        ixy="-0.00000001"
+        ixz="0"
+        iyy="0.00000025"
+        iyz="0.00000002"
+        izz="0.00000052" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_dip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_dip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_dip_joint"
+    type="revolute">
+    <origin
+      xyz="0 0.037417 -0.0045"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_pip_link" />
+    <child
+      link="right_hand_thumb_dip_link" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_top_cos_link">
+    <inertial>
+      <origin
+        xyz="-2.42930675575792E-14 -8.32667268468867E-17 -6.93889390390723E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_top_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_top_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_top_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.0181728187019062 0.00791114210898186"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_dip_link" />
+    <child
+      link="right_hand_thumb_top_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_top_link">
+    <inertial>
+      <origin
+        xyz="-2.42687814289155E-14 -1.38777878078145E-16 5.96744875736022E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_top_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_top_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_top_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.0312512504715699 0"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_dip_link" />
+    <child
+      link="right_hand_thumb_top_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_pip_cos_link">
+    <inertial>
+      <origin
+        xyz="5.25621213220973E-16 -1.66533453693773E-16 6.10622663543836E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_pip_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_pip_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_pip_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.0189168958538693 0.00689999999999111"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_pip_link" />
+    <child
+      link="right_hand_thumb_pip_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_thumb_mcp1_cos_link">
+    <inertial>
+      <origin
+        xyz="4.63171168085807E-16 -1.38777878078145E-16 3.85108611666851E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp1_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_thumb_mcp1_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_thumb_mcp1_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.0169999999999941 0.0115000000000087"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_thumb_mcp1_link" />
+    <child
+      link="right_hand_thumb_mcp1_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_mcp0_link">
+    <inertial>
+      <origin
+        xyz="0.000800179544239474 -1.24206200879939E-15 0.0116298858976673"
+        rpy="0 0 0" />
+      <mass
+        value="0.00581743" />
+      <inertia
+        ixx="0.00000043"
+        ixy="0"
+        ixz="-0.00000004"
+        iyy="0.00000042"
+        iyz="0.00000001"
+        izz="0.00000032" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_mcp0_joint"
+    type="revolute">
+    <origin
+      xyz="0.0045 0.032961 0.096293"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_index_mcp0_link" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-0.262"
+      upper="1.396"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_mcp1_link">
+    <inertial>
+      <origin
+        xyz="-0.00459984824102455 3.17930260026328E-06 0.0165208001830223"
+        rpy="0 0 0" />
+      <mass
+        value="0.07962914" />
+      <inertia
+        ixx="0.00001597"
+        ixy="-0.00000014"
+        ixz="-0.00000060"
+        iyy="0.00001820"
+        iyz="-0.00000004"
+        izz="0.00000567" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_mcp1_joint"
+    type="revolute">
+    <origin
+      xyz="0.0055 0 0.0233"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_mcp0_link" />
+    <child
+      link="right_hand_index_mcp1_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.745"
+      effort="0.884"
+      velocity="1.696" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_mcp1_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0199604354789114 -1.25825468257762E-06 -0.0153920857401718"
+        rpy="0 0 0" />
+      <mass
+        value="0.00158811" />
+      <inertia
+        ixx="0.00000042"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000039"
+        iyz="0.00000000"
+        izz="0.00000005" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp1_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp1_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_mcp1_back_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_mcp1_link" />
+    <child
+      link="right_hand_index_mcp1_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_pip_link">
+    <inertial>
+      <origin
+        xyz="-0.00361888107678867 3.42423685506313E-05 0.022193681159044"
+        rpy="0 0 0" />
+      <mass
+        value="0.04158248" />
+      <inertia
+        ixx="0.00000556"
+        ixy="0"
+        ixz="0.00000016"
+        iyy="0.00000571"
+        iyz="0.00000007"
+        izz="0.00000186" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_pip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_pip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_pip_joint"
+    type="revolute">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_mcp1_link" />
+    <child
+      link="right_hand_index_pip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.302"
+      velocity="1.98" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_pip_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0111113859670183 -3.26433369608053E-05 -0.0136067499614795"
+        rpy="0 0 0" />
+      <mass
+        value="0.00131486" />
+      <inertia
+        ixx="0.00000021"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000020"
+        iyz="0.00000000"
+        izz="0.00000004" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_pip_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_pip_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_pip_back_joint"
+    type="fixed">
+    <origin
+      xyz="-0.00450000001858888 0 0.0374168958516306"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_pip_link" />
+    <child
+      link="right_hand_index_pip_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_dip_link">
+    <inertial>
+      <origin
+        xyz="-0.000426160676495441 2.62537498793569E-06 0.0156390827493995"
+        rpy="0 0 0" />
+      <mass
+        value="0.00650702" />
+      <inertia
+        ixx="0.00000052"
+        ixy="0"
+        ixz="0.00000002"
+        iyy="0.00000049"
+        iyz="-0.00000001"
+        izz="0.00000025" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_dip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_dip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_dip_joint"
+    type="revolute">
+    <origin
+      xyz="-0.0045 0 0.037417"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_pip_link" />
+    <child
+      link="right_hand_index_dip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_top_cos_link">
+    <inertial>
+      <origin
+        xyz="2.16840434497101E-16 -2.48759346455074E-14 5.55111512312578E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_top_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_top_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_top_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0079111421089901 0 0.0181728187019025"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_dip_link" />
+    <child
+      link="right_hand_index_top_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_top_link">
+    <inertial>
+      <origin
+        xyz="2.1163626406917E-16 -2.48828735394113E-14 5.55111512312578E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_top_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_top_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_top_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0312512504715699"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_dip_link" />
+    <child
+      link="right_hand_index_top_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_pip_cos_link">
+    <inertial>
+      <origin
+        xyz="0 6.93889390390723E-18 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_pip_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_pip_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_pip_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.00689999999060291 0 0.0189168958572941"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_pip_link" />
+    <child
+      link="right_hand_index_pip_cos_link" />
+    <axis
+      xyz="0 1 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_index_mcp1_cos_link">
+    <inertial>
+      <origin
+        xyz="-3.78169717762944E-16 -8.39606162372775E-16 8.32667268468867E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp1_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_index_mcp1_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_index_mcp1_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0114999999915565 0 0.0170000000057125"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_index_mcp1_link" />
+    <child
+      link="right_hand_index_mcp1_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_mcp0_link">
+    <inertial>
+      <origin
+        xyz="0.000800179547578445 -1.25247034965525E-15 0.0116298858976672"
+        rpy="0 0 0" />
+      <mass
+        value="0.00581743" />
+      <inertia
+        ixx="0.00000043"
+        ixy="0"
+        ixz="-0.00000007"
+        iyy="0.00000044"
+        iyz="0.00000001"
+        izz="0.00000033" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_mcp0_joint"
+    type="revolute">
+    <origin
+      xyz="0.0045 0.0086396 0.098793"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_mid_mcp0_link" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-0.785"
+      upper="0.262"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_mcp1_link">
+    <inertial>
+      <origin
+        xyz="-0.00459984773920468 3.17911330716299E-06 0.0165208004899805"
+        rpy="0 0 0" />
+      <mass
+        value="0.07962914" />
+      <inertia
+        ixx="0.00001596"
+        ixy="-0.00000013"
+        ixz="-0.0000006"
+        iyy="0.0000182"
+        iyz="-0.00000003"
+        izz="0.00000565" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_mcp1_joint"
+    type="revolute">
+    <origin
+      xyz="0.0055 0 0.0233"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_mcp0_link" />
+    <child
+      link="right_hand_mid_mcp1_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.745"
+      effort="0.884"
+      velocity="1.696" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_mcp1_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0199604354789077 -1.258254671576E-06 -0.015392085740114"
+        rpy="0 0 0" />
+      <mass
+        value="0.00158811" />
+      <inertia
+        ixx="0.00000042"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000039"
+        iyz="0.00000000"
+        izz="0.00000005" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp1_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp1_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_mcp1_back_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_mcp1_link" />
+    <child
+      link="right_hand_mid_mcp1_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_pip_link">
+    <inertial>
+      <origin
+        xyz="-0.00361888107526016 3.42423712828156E-05 0.0221936811541508"
+        rpy="0 0 0" />
+      <mass
+        value="0.04158248" />
+      <inertia
+        ixx="0.00000561"
+        ixy="0.00000001"
+        ixz="0.00000017"
+        iyy="0.00000576"
+        iyz="0.00000005"
+        izz="0.00000186" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_pip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_pip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_pip_joint"
+    type="revolute">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_mcp1_link" />
+    <child
+      link="right_hand_mid_pip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.302"
+      velocity="1.98" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_pip_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0111113860121317 -3.26434244280593E-05 -0.0136067502985785"
+        rpy="0 0 0" />
+      <mass
+        value="0.00131486" />
+      <inertia
+        ixx="0.00000021"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000020"
+        iyz="0.00000000"
+        izz="0.00000004" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_pip_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_pip_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_pip_back_joint"
+    type="fixed">
+    <origin
+      xyz="-0.00450000001858886 0 0.0374168958516306"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_pip_link" />
+    <child
+      link="right_hand_mid_pip_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_dip_link">
+    <inertial>
+      <origin
+        xyz="-0.000426160676913942 2.62536224433958E-06 0.0156390827433241"
+        rpy="0 0 0" />
+      <mass
+        value="0.00650702" />
+      <inertia
+        ixx="0.00000052"
+        ixy="0"
+        ixz="0.00000002"
+        iyy="0.00000049"
+        iyz="-0.00000001"
+        izz="0.00000025" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_dip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_dip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_dip_joint"
+    type="revolute">
+    <origin
+      xyz="-0.0045 0 0.037417"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_pip_link" />
+    <child
+      link="right_hand_mid_dip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_top_cos_link">
+    <inertial>
+      <origin
+        xyz="1.54390389361936E-16 -2.57242144252601E-14 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_top_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_top_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_top_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.00791114210899072 0 0.0181728187019025"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_dip_link" />
+    <child
+      link="right_hand_mid_top_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_top_link">
+    <inertial>
+      <origin
+        xyz="1.64798730217797E-16 -2.52298182346067E-14 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_top_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_top_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_top_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0312512504715699"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_dip_link" />
+    <child
+      link="right_hand_mid_top_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_pip_cos_link">
+    <inertial>
+      <origin
+        xyz="-7.73686670285656E-16 1.04083408558608E-17 1.38777878078145E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_pip_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_pip_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_pip_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.00689999999060292 0 0.018916895857294"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_pip_link" />
+    <child
+      link="right_hand_mid_pip_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_mid_mcp1_cos_link">
+    <inertial>
+      <origin
+        xyz="-3.85108611666851E-16 -7.42461647718073E-16 8.32667268468867E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp1_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_mid_mcp1_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_mid_mcp1_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0114999999915565 0 0.0170000000057124"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_mid_mcp1_link" />
+    <child
+      link="right_hand_mid_mcp1_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_mcp0_link">
+    <inertial>
+      <origin
+        xyz="0.00080017954481806 -1.23859256184744E-15 0.0116298858976672"
+        rpy="0 0 0" />
+      <mass
+        value="0.00581743" />
+      <inertia
+        ixx="0.00000043"
+        ixy="0"
+        ixz="-0.00000007"
+        iyy="0.00000044"
+        iyz="0.00000001"
+        izz="0.00000033" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_mcp0_joint"
+    type="revolute">
+    <origin
+      xyz="0.0045 -0.014087 0.094293"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_ring_mcp0_link" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-0.785"
+      upper="0.262"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_mcp1_link">
+    <inertial>
+      <origin
+        xyz="-0.00459984775159772 3.17912168536216E-06 0.0165208005013921"
+        rpy="0 0 0" />
+      <mass
+        value="0.07962914" />
+      <inertia
+        ixx="0.00001596"
+        ixy="-0.00000013"
+        ixz="-0.0000006"
+        iyy="0.0000182"
+        iyz="-0.00000003"
+        izz="0.00000565" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_mcp1_joint"
+    type="revolute">
+    <origin
+      xyz="0.0055 0 0.0233"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_mcp0_link" />
+    <child
+      link="right_hand_ring_mcp1_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.745"
+      effort="0.884"
+      velocity="1.696" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_mcp1_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0199604354789095 -1.25825467794417E-06 -0.0153920857400834"
+        rpy="0 0 0" />
+      <mass
+        value="0.00158811" />
+      <inertia
+        ixx="0.00000042"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000039"
+        iyz="0.00000000"
+        izz="0.00000005" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp1_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp1_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_mcp1_back_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_mcp1_link" />
+    <child
+      link="right_hand_ring_mcp1_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_pip_link">
+    <inertial>
+      <origin
+        xyz="-0.00361888127740581 3.42425227625905E-05 0.022193681496521"
+        rpy="0 0 0" />
+      <mass
+        value="0.04158248" />
+      <inertia
+        ixx="0.00000556"
+        ixy="0"
+        ixz="0.00000016"
+        iyy="0.00000571"
+        iyz="0.00000007"
+        izz="0.00000186" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_pip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_pip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_pip_joint"
+    type="revolute">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_mcp1_link" />
+    <child
+      link="right_hand_ring_pip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.302"
+      velocity="1.98" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_pip_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0111113859589079 -3.26433182991793E-05 -0.0136067498990264"
+        rpy="0 0 0" />
+      <mass
+        value="0.00131486" />
+      <inertia
+        ixx="0.00000021"
+        ixy="0.00000000001"
+        ixz="0.00000000001"
+        iyy="0.0000002"
+        iyz="0.00000000001"
+        izz="0.00000004" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_pip_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_pip_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_pip_back_joint"
+    type="fixed">
+    <origin
+      xyz="-0.00450000001858883 0 0.0374168958516306"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_pip_link" />
+    <child
+      link="right_hand_ring_pip_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_dip_link">
+    <inertial>
+      <origin
+        xyz="-0.000426160512018459 2.62550404078223E-06 0.0156390813883667"
+        rpy="0 0 0" />
+      <mass
+        value="0.00650702" />
+      <inertia
+        ixx="0.00000052"
+        ixy="0"
+        ixz="0.00000002"
+        iyy="0.00000049"
+        iyz="-0.00000001"
+        izz="0.00000025" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_dip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_dip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_dip_joint"
+    type="revolute">
+    <origin
+      xyz="-0.0045 0 0.037417"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_pip_link" />
+    <child
+      link="right_hand_ring_dip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_top_cos_link">
+    <inertial>
+      <origin
+        xyz="1.66533453693773E-16 -2.48724651985555E-14 -2.77555756156289E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_top_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_top_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_top_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.00791114210899012 0 0.0181728187019025"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_dip_link" />
+    <child
+      link="right_hand_ring_top_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_top_link">
+    <inertial>
+      <origin
+        xyz="1.76074432811646E-16 -2.48776693689834E-14 -2.77555756156289E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_top_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_top_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_top_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0312512504715699"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_dip_link" />
+    <child
+      link="right_hand_ring_top_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_pip_cos_link">
+    <inertial>
+      <origin
+        xyz="-7.94503351997378E-16 1.04083408558608E-17 1.11022302462516E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_pip_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_pip_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_pip_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.00689999999060291 0 0.018916895857294"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_pip_link" />
+    <child
+      link="right_hand_ring_pip_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ring_mcp1_cos_link">
+    <inertial>
+      <origin
+        xyz="-3.78169717762944E-16 -7.30318583386236E-16 8.32667268468867E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp1_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ring_mcp1_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ring_mcp1_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0114999999915564 0 0.0170000000057122"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ring_mcp1_link" />
+    <child
+      link="right_hand_ring_mcp1_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ltspalm_link">
+    <inertial>
+      <origin
+        xyz="-0.00282766701933263 -0.0108790825914307 0.0259197728919961"
+        rpy="0 0 0" />
+      <mass
+        value="0.07346799" />
+      <inertia
+        ixx="0.00002302"
+        ixy="0.00000005"
+        ixz="0.00000286"
+        iyy="0.0000234"
+        iyz="0.00000071"
+        izz="0.00000601" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ltspalm_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.055 0.055 0.063 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ltspalm_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ltspalm_joint"
+    type="revolute">
+    <origin
+      xyz="0.0115 -0.0265 0.041"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_ltspalm_link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0.524"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ltsdorsum_link">
+    <inertial>
+      <origin
+        xyz="-0.0138483040489763 -0.0110954533218018 0.013267761274763"
+        rpy="0 0 0" />
+      <mass
+        value="0.00389363" />
+      <inertia
+        ixx="0.00000225"
+        ixy="0"
+        ixz="0.00000051"
+        iyy="0.00000219"
+        iyz="0.0000001"
+        izz="0.00000044" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ltsdorsum_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.941 0.941 0.941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ltsdorsum_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ltsdorsum_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ltspalm_link" />
+    <child
+      link="right_hand_ltsdorsum_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_mcp0_link">
+    <inertial>
+      <origin
+        xyz="0.000800179546620026 1.79717352111197E-15 0.0116298858976338"
+        rpy="0 0 0" />
+      <mass
+        value="0.00581743" />
+      <inertia
+        ixx="0.00000043"
+        ixy="0"
+        ixz="-0.00000007"
+        iyy="0.00000044"
+        iyz="0.00000001"
+        izz="0.00000033" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_mcp0_joint"
+    type="revolute">
+    <origin
+      xyz="-0.007 -0.011478 0.044292"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_ltspalm_link" />
+    <child
+      link="right_hand_pinky_mcp0_link" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-1.047"
+      upper="0.175"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_mcp1_link">
+    <inertial>
+      <origin
+        xyz="-0.00459984767856569 3.1791255848887E-06 0.0165208006295126"
+        rpy="0 0 0" />
+      <mass
+        value="0.07962914" />
+      <inertia
+        ixx="0.00001596"
+        ixy="-0.00000013"
+        ixz="-0.0000006"
+        iyy="0.0000182"
+        iyz="-0.00000003"
+        izz="0.00000565" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_mcp1_joint"
+    type="revolute">
+    <origin
+      xyz="0.0055 0 0.0233"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_mcp0_link" />
+    <child
+      link="right_hand_pinky_mcp1_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.745"
+      effort="0.884"
+      velocity="1.696" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_mcp1_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0199604354789124 -1.25825467103824E-06 -0.0153920857401496"
+        rpy="0 0 0" />
+      <mass
+        value="0.00158811" />
+      <inertia
+        ixx="0.00000042"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000039"
+        iyz="0.00000000"
+        izz="0.00000005" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp1_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp1_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_mcp1_back_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_mcp1_link" />
+    <child
+      link="right_hand_pinky_mcp1_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_pip_link">
+    <inertial>
+      <origin
+        xyz="-0.00361888127561796 3.42425203839203E-05 0.0221936814985659"
+        rpy="0 0 0" />
+      <mass
+        value="0.04158248" />
+      <inertia
+        ixx="0.00000556"
+        ixy="0"
+        ixz="0.00000016"
+        iyy="0.00000571"
+        iyz="0.00000007"
+        izz="0.00000186" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_pip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_pip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_pip_joint"
+    type="revolute">
+    <origin
+      xyz="0 0 0.0345"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_mcp1_link" />
+    <child
+      link="right_hand_pinky_pip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.302"
+      velocity="1.98" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_pip_back_link">
+    <inertial>
+      <origin
+        xyz="-0.0111113859610021 -3.2643376936356E-05 -0.0136067499281053"
+        rpy="0 0 0" />
+      <mass
+        value="0.00131486" />
+      <inertia
+        ixx="0.00000021"
+        ixy="0.00000000"
+        ixz="0.00000000"
+        iyy="0.00000020"
+        iyz="0.00000000"
+        izz="0.00000004" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_pip_back_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_pip_back_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_pip_back_joint"
+    type="fixed">
+    <origin
+      xyz="-0.00450000001858889 0 0.0374168958516306"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_pip_link" />
+    <child
+      link="right_hand_pinky_pip_back_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_dip_link">
+    <inertial>
+      <origin
+        xyz="-0.000426160793456864 2.62469357041606E-06 0.0156390837461996"
+        rpy="0 0 0" />
+      <mass
+        value="0.00650702" />
+      <inertia
+        ixx="0.00000052"
+        ixy="0"
+        ixz="0.00000002"
+        iyy="0.00000049"
+        iyz="-0.00000001"
+        izz="0.00000025" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_dip_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_dip_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_dip_joint"
+    type="revolute">
+    <origin
+      xyz="-0.0045 0 0.037417"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_pip_link" />
+    <child
+      link="right_hand_pinky_dip_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.571"
+      effort="0.295"
+      velocity="2" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_top_cos_link">
+    <inertial>
+      <origin
+        xyz="2.35922392732846E-16 -2.48898124333152E-14 2.77555756156289E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_top_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_top_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_top_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.00791114209997283 0 0.018172818705828"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_dip_link" />
+    <child
+      link="right_hand_pinky_top_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_top_link">
+    <inertial>
+      <origin
+        xyz="2.48932818802672E-16 -2.48967513272191E-14 2.77555756156289E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_top_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_top_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_top_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0312512504715699"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_dip_link" />
+    <child
+      link="right_hand_pinky_top_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_pip_cos_link">
+    <inertial>
+      <origin
+        xyz="2.56392129749372E-15 -1.38777878078145E-17 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_pip_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_pip_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_pip_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0069 0 0.018917"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_pip_link" />
+    <child
+      link="right_hand_pinky_pip_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_pinky_mcp1_cos_link">
+    <inertial>
+      <origin
+        xyz="2.51534904016637E-15 3.46944695195361E-17 -8.32667268468867E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp1_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_pinky_mcp1_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_pinky_mcp1_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0115 0 0.017"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_pinky_mcp1_link" />
+    <child
+      link="right_hand_pinky_mcp1_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_ltspalm_cos_link">
+    <inertial>
+      <origin
+        xyz="-2.70616862252382E-16 1.38777878078145E-17 6.24500451351651E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001"  />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ltspalm_cos_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_ltspalm_cos_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_ltspalm_cos_joint"
+    type="fixed">
+    <origin
+      xyz="0.0090132 -0.014523 0.018734"
+      rpy="0 0 -0.046362" />
+    <parent
+      link="right_hand_ltspalm_link" />
+    <child
+      link="right_hand_ltspalm_cos_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_plam_cos_0_link">
+    <inertial>
+      <origin
+        xyz="-2.25514051876985E-16 -1.73472347597681E-18 5.55111512312578E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_plam_cos_0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_plam_cos_0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_plam_cos_0_joint"
+    type="fixed">
+    <origin
+      xyz="0.0228 0.012 0.0825"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_plam_cos_0_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+  <link
+    name="right_hand_plam_cos_1_link">
+    <inertial>
+      <origin
+        xyz="-1.87350135405495E-16 1.78125013614042E-15 1.38777878078145E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00000565" />
+      <inertia
+        ixx="0.000001"
+        ixy="0"
+        ixz="0"
+        iyy="0.000001"
+        iyz="0"
+        izz="0.000001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_plam_cos_1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://xhand_right/meshes/right_hand_plam_cos_1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_hand_plam_cos_1_joint"
+    type="fixed">
+    <origin
+      xyz="0.0284 0 0.038"
+      rpy="0 0 0" />
+    <parent
+      link="right_hand_link" />
+    <child
+      link="right_hand_plam_cos_1_link" />
+    <axis
+      xyz="0 0 0" />
+    <dynamics
+      damping="0"
+      friction="0" />
+  </joint>
+</robot>

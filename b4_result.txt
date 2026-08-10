@@ -1,0 +1,5 @@
+测试关节 isaaclab[5]=right_hand_index_mcp1_joint(xhand 5)  阶跃=0.0rad
+kp=10.0 kd=0.3 speed=350.0
+[保位] 抖动std=0.0000
+[阶跃] 上升时间=0ms  超调=+0%  稳态误差=-0.000rad
+好的标准: 上升<100ms & 超调<~20% & 稳态误差小

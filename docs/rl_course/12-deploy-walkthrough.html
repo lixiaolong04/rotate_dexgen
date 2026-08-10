@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>12 · 部署到真机逐行精讲</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 12 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 12 · 从代码到真手</div>
+  <h1>部署到真机逐行精讲</h1>
+  <p class="sub">训练好的"学生大脑"已经躺在一个 <code>.pth</code> 文件里。这一章我们把它接到一只真实的灵巧手上，逐个零件、逐行代码地看：它到底是怎么"看一眼手、算一个动作、发给电机"的。完全零基础也能跟下来。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>读这章前的小提示。</b> 如果你还没读过第 06 章（学生怎么来的）、第 10 章（整体流程）、第 11 章（sim-to-real 原理），没关系——本章会把用到的概念都用大白话再讲一遍。本章聚焦"代码怎么跑"，看的是仓库里 <code>rl_isaaclab/deploy_xhand/</code> 这个文件夹。</div>
+
+<h2 id="what">一、部署到底在做什么</h2>
+<div class="intuition">
+想象你已经请了一位"会转笔的高手"住进了一个 <code>.pth</code> 文件里。部署，就是给这位高手装上一双真手和一双真眼睛，然后让他<strong>不停地重复同一件事</strong>：<br>
+"<strong>看一眼</strong>现在手指弯成什么样、指尖碰到东西没 → <strong>想一下</strong>下一步每根手指该动多少 → <strong>动手</strong>把指令发给电机。"<br>
+每秒钟做 20 次，永远循环。就这么简单。难的不是循环本身，而是让真手上的每个数字，和他当年练习时（仿真里）看到的数字<strong>长得一模一样</strong>，他才不会"看错题"。
+</div>
+
+<p>用一句话概括这个循环，它就是本章所有代码的主心骨：</p>
+<div class="math-block">
+$$\text{观测 } o_t \;\xrightarrow{\;\text{策略}\;}\; \text{动作 } a_t \;\xrightarrow{\;\text{换算}\;}\; \text{关节目标} \;\xrightarrow{\;\text{PD 电机}\;}\; \text{真手运动} \;\rightarrow\; o_{t+1}.$$
+</div>
+
+<p>部署和训练有四个根本区别，记住它们，下面很多设计就都有了理由：</p>
+<table>
+  <thead><tr><th>区别</th><th>训练时（仿真）</th><th>部署时（真机）</th></tr></thead>
+  <tbody>
+    <tr><td><b>有没有仿真器</b></td><td>有，物理引擎算一切</td><td>没有，真手就是"物理引擎"</td></tr>
+    <tr><td><b>特权信息</b></td><td>用（物体质量/摩擦等"上帝视角"）</td><td>用不了，只能靠历史去"猜"</td></tr>
+    <tr><td><b>时间</b></td><td>可以慢慢算、可加速</td><td>必须实时，每步严格卡 1/20 秒</td></tr>
+    <tr><td><b>风险</b></td><td>错了重开就行</td><td><b>会伤人伤物</b>，安全第一</td></tr>
+  </tbody>
+</table>
+
+<h2 id="two">二、两套部署代码的关系</h2>
+<p>这个项目里其实有<strong>两套</strong>部署代码，理解它们的关系，是看懂本章的钥匙：</p>
+<table>
+  <thead><tr><th></th><th>原版 Sharpa（模板）</th><th>Xhand 移植版（本项目要上的）</th></tr></thead>
+  <tbody>
+    <tr><td>文件</td><td><code>scripts/deploy.py</code> + <code>sharpa_wave_deploy_env.py</code></td><td>整个 <code>deploy_xhand/</code> 文件夹</td></tr>
+    <tr><td>手</td><td>SharpaWave 灵巧手</td><td>Xhand 1 Pro 灵巧手</td></tr>
+    <tr><td>动作维度</td><td>22</td><td>21</td></tr>
+    <tr><td>观测维度</td><td>192</td><td>186</td></tr>
+    <tr><td>单帧维度</td><td>64 = 22+22+5+15</td><td>62 = 21+21+5+15</td></tr>
+  </tbody>
+</table>
+<div class="intuition">
+打个比方：原版 Sharpa 部署代码是一份"<strong>菜谱</strong>"，已经被验证能做出一道菜。我们换了个牌子的厨房（Xhand），于是照着这份菜谱<strong>一行一行抄</strong>，只把"22 人份"改成"21 人份"（维度）。但有一件事不能照抄——<strong>灶台的操作面板</strong>（硬件 SDK）：Xhand 的 SDK 和 SharpaWave 完全是两套，所以碰硬件的那一个文件要<strong>按真实 Xhand SDK 重写</strong>。</div>
+<p>这就引出一个聪明的工程决定（代码里叫 <strong>approach A</strong>），它把"照抄的部分"和"必须重写的部分"干净地隔开：</p>
+<div class="card">
+<p style="margin:0"><b>核心思想：把"碰硬件"的脏活，全关进一个小盒子里。</b><br>
+环境逻辑（<code>deploy_env.py</code>：拼观测、算动作、状态机、暖启动）<b>逐行照抄 sharpa</b>，全程只说一种"语言"——IsaacLab 的关节顺序、弧度制。所有真正要碰硬件 SDK 的动作，都被赶进 <code>hw_interface.py</code> 这<b>一个</b>文件。于是：<br>
+① 占代码大头的环境逻辑能和原版 Sharpa 几乎一字不差地对照、复用其正确性；<br>
+② 唯一需要"换灶台面板"的就只剩 <code>hw_interface.py</code> 一处；<br>
+③ 还能把这个"碰硬件的小盒子"换成一个<b>假的</b>（<code>fake_hw.py</code>），于是<b>没有真手也能把整套流程跑通</b>、还能写自动化测试。</p>
+</div>
+<div class="note">
+<b>代码已更新（重要）。</b> <code>hw_interface.py</code> 现在<b>已按真实 Xhand SDK（容器内 introspect 出的 <code>hand_controller 0.1.49</code>）重写</b>，不再是 SharpaWave 的接口。最直接的后果有两个，本章后面会展开：<br>
+• 关节指令变成了逐关节构造 <code>Green_JointCommand_User</code>（带 kp/kd/position/speed/torque/mode）再 <code>set_joint_cmd_list</code> 批量下发（第七节）；<br>
+• <b>Xhand 的触觉根本不是 SharpaWave 的 6 轴力 F6</b>——它是每根手指 3 块触觉 pad、每块 pad 一个 taxel 阵列 + 法向/切向力（第九节，整节已重写）。</div>
+
+<h2 id="parts">三、五个零件总览</h2>
+<p>整个 <code>deploy_xhand/</code> 就五个核心零件。先看它们怎么拼在一起，后面再逐个拆开。把鼠标移到方块上看说明：</p>
+<div class="viz">
+  <div class="viz-title">部署系统五零件（可悬停）</div>
+  <div class="viz-sub">蓝＝入口，绿＝环境，青＝策略，橙＝硬件层，紫＝顺序映射。箭头是数据/调用方向。</div>
+  <div id="partsDiagram"></div>
+  <div class="readout" id="partsOut">把鼠标移到任意方块上，这里会显示它负责什么。</div>
+</div>
+<div class="symtable">
+  <div class="symtitle">五零件职责速查</div>
+  <table>
+    <thead><tr><th>文件</th><th>角色</th><th>一句话职责</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">deploy_xhand.py</td><td>入口</td><td>组装零件 + 跑主循环 + 接住急停（Ctrl-C）</td></tr>
+      <tr><td class="sym-col">deploy_env.py</td><td>环境</td><td>20Hz 节拍、拼观测、键盘状态机、暖启动抓取</td></tr>
+      <tr><td class="sym-col">policy_runner.py</td><td>大脑</td><td>加载学生策略、把观测算成动作</td></tr>
+      <tr><td class="sym-col">hw_interface.py<br>fake_hw.py</td><td>硬件层</td><td>唯一碰 SDK 的地方 / 它的离线假替身</td></tr>
+      <tr><td class="sym-col">joint_map.py<br>tactile_map.py</td><td>翻译</td><td>关节编号互译、5 指触觉力组装</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="loop">四、一次控制循环：主程序长什么样</h2>
+<p>先看最外层的入口 <code>deploy_xhand.py</code>。剥掉参数解析，它的主循环短得惊人——这正是 approach A 的功劳，复杂度都被藏进了零件里：</p>
+<span class="code-cap">deploy_xhand/deploy_xhand.py · main（节选）</span>
+<pre><code class="lang-py">hw  = build_hw(cfg, args.dry_run)        # 真手 or 假手
+hw.connect()                             # 连上
+env = XhandInhandRotateDeployEnv(cfg, hw)        # 组装环境
+runner = PolicyRunner(env, args.load_path, device=args.device)  # 装载大脑
+
+obs = env.reset()                        # 暖启动抓取，拿到第一帧观测
+try:
+    while True:
+        a   = runner.act(obs)            # ① 大脑：观测 → 动作
+        obs = env.step(a)                # ② 手：执行动作（内含 20Hz 节拍），返回新观测
+except KeyboardInterrupt:                # Ctrl-C
+    print("急停: 断连")
+finally:
+    hw.disconnect()                      # 不管怎样，最后一定松手断连</code></pre>
+<div class="intuition">
+整段就一句话：<strong>反复 act → step</strong>。<code>act</code> 是"想"，<code>step</code> 是"做"。<code>step</code> 里面会"睡"一小会儿，保证整圈刚好 1/20 秒。最妙的是那个 <code>finally</code>：无论是正常结束、报错、还是你慌乱中按了 Ctrl-C，<strong>程序一定会松手断连</strong>，不会让手卡在一个危险姿势上死命用力。这是真机安全的最后一道闸。</div>
+
+<div class="viz">
+  <div class="viz-title">一次控制循环的数据流（可悬停）</div>
+  <div class="viz-sub">同一份信息绕一圈是怎么变形的。鼠标悬停每个环节看它的维度与含义（数字基于 Xhand 移植版）。</div>
+  <div id="loopFlow"></div>
+  <div class="readout" id="loopOut">把鼠标移到方块上查看每一步的含义。</div>
+</div>
+
+<h2 id="brain">五、大脑：PolicyRunner 怎么把观测算成动作</h2>
+<p><code>policy_runner.py</code> 负责"想"。它加载的是<strong>学生策略</strong>（第 06 章蒸馏出来的那个，文件名里叫 <code>student_t603.pth</code>），推理只有几行：</p>
+<span class="code-cap">deploy_xhand/policy_runner.py · act</span>
+<pre><code class="lang-py">@torch.no_grad()                          # 部署不需要算梯度
+def act(self, obs_dict):
+    inp = {
+        "obs":          self.agent.running_mean_std(obs_dict["obs"]),       # 归一化当前观测
+        "proprio_hist": self.agent.sa_mean_std(obs_dict["proprio_hist"]),  # 归一化历史
+    }
+    mu = self.agent.model.act_inference(inp)   # 学生算出动作"均值"
+    return torch.clamp(mu, -1.0, 1.0).cpu()    # 夹到 [-1, 1]</code></pre>
+
+<p>这里藏着两个新手最容易栽跟头的点，务必记住：</p>
+<div class="warn">
+<b>易错点 ①：部署只取均值，不采样。</b> 训练时策略是个"高斯分布"（第 03 章），会<b>随机</b>抽动作来探索。但真机上你要的是<b>稳定、可复现</b>的行为，所以调 <code>act_inference</code> 直接取分布的<b>均值 μ</b>，不再掷骰子。</div>
+<div class="warn">
+<b>易错点 ②：归一化的"尺子"也要一起加载。</b> <code>running_mean_std</code>（给观测用）和 <code>sa_mean_std</code>（给历史用）是训练时统计出来的均值方差（第 08 章）。部署时它们被<b>冻结</b>。少加载任何一个，输入分布就会偏移，策略行为漂移。</div>
+
+<p>还有一个非常具体的工程坑，注释里写得很清楚——<strong>显卡不一致</strong>问题：</p>
+<span class="code-cap">deploy_xhand/policy_runner.py · 加载权重（CPU-safe）</span>
+<pre><code class="lang-py"># t603 在 CUDA 上训练保存；真机部署容器常是 CPU-only torch。
+# 直接 torch.load 不带 map_location 会崩（试图反序列化到 CUDA 设备）。
+ckpt = torch.load(ckpt_path, map_location=device)        # 显式按当前设备加载
+self.agent.running_mean_std.load_state_dict(ckpt["running_mean_std"])
+self.agent.model.load_state_dict(ckpt["model"])
+self.agent.sa_mean_std.load_state_dict(ckpt["sa_mean_std"])
+self.agent.set_eval()                                    # 切到推理模式</code></pre>
+<div class="tip">
+<b>原版 Sharpa 怎么做的？</b> 原版 <code>scripts/deploy.py</code> 用 <code>agent.restore_test(resume_path)</code> 一行搞定加载，但它内部 <code>torch.load</code> 没带 <code>map_location</code>。移植版为了能在无 GPU 的部署机上跑，手动拆成上面"三件套"加载——<b>逻辑等价，只是更安全</b>。</div>
+
+<h2 id="obs">六、观测怎么拼成 186 维</h2>
+<div class="intuition">
+策略是个挑剔的考生，只认训练时那套"题面格式"。所以部署时拼观测，必须<strong>一字不差</strong>地照训练时的样子来。好在这部分代码和原版 Sharpa 几乎完全一样，只是把 22 改成 21。</div>
+<p>每个控制步，手会给我们一帧"快照"，叫<strong>单帧观测</strong>，62 个数：</p>
+<div class="math-block">
+$$\underbrace{62}_{\text{单帧}} \;=\; \underbrace{21}_{\text{归一化关节角}} \;+\; \underbrace{21}_{\text{控制目标}} \;+\; \underbrace{5}_{\text{指尖触觉}} \;+\; \underbrace{15}_{\text{接触点(默认全 0)}}.$$
+</div>
+<p>关节角要先用 <code>unscale</code> 归一化到 $[-1,1]$，保证和训练同一把尺子：</p>
+<div class="math-block">
+$$\hat q \;=\; \frac{2q - (q_{\max}+q_{\min})}{q_{\max}-q_{\min}}.$$
+</div>
+<p>然后把<strong>最近 3 帧</strong>拼起来 $= 62\times 3 = 186$ 喂给主干；同时把<strong>最近 30 帧</strong>留给学生的 TConv 去"猜"看不见的物理属性（第 06、07 章）：</p>
+<span class="code-cap">deploy_xhand/deploy_env.py · compute_observations（节选）</span>
+<pre><code class="lang-py">cur = unscale(self.hand_dof_pos, lower, upper).unsqueeze(1)   # 关节角，同一归一化
+cur = torch.cat([cur, self.cur_targets.unsqueeze(1)], dim=-1)         # 拼上控制目标
+cur = torch.cat([cur, sensed_contacts, contact_pos], dim=-1)         # 拼上触觉 + 接触点
+self.obs_buf_lag_history = torch.cat([prev, cur], dim=1)             # 推进滑动窗口
+obs_buf = self.obs_buf_lag_history[:, -3:].reshape(num_envs, -1)     # 最近 3 帧 → 186
+self.proprio_hist_buf[:] = self.obs_buf_lag_history[:, -30:]         # 最近 30 帧 → 给 TConv</code></pre>
+<div class="note">
+<b>"控制目标"为什么也是观测的一部分？</b> 因为策略需要知道"我上一步刚命令手指去哪了"，才能判断这一步该怎么补。这是增量式控制的常见做法，下一节就会用到它。</div>
+
+<h2 id="act">七、动作怎么落到电机上</h2>
+<p>策略吐出的动作 $a\in[-1,1]^{21}$ 不是直接的角度，而是一个<strong>"在上次目标基础上微调多少"</strong>的增量。两步走：</p>
+<span class="code-cap">deploy_xhand/deploy_env.py · _pre_physics_step（算目标）</span>
+<pre><code class="lang-py">actions = saturate(actions, -clip_actions, clip_actions)              # 先把动作夹进 ±1
+# 增量式：新目标 = 上次目标 + 步长 × 安全系数 × 动作
+targets = self.prev_targets + self.cfg.action_scale * self.cfg.action_scale_mul * actions
+self.cur_targets = saturate(targets, lower, upper)                    # 再夹进关节限位</code></pre>
+<div class="math-block">
+$$\text{target}_t \;=\; \text{clip}\Big(\text{target}_{t-1} + \underbrace{\tfrac{1}{24}}_{\text{action\_scale}}\cdot \underbrace{\mu}_{\text{安全系数}}\cdot\, a_t,\;\; q_{\min},\, q_{\max}\Big).$$
+</div>
+<p>算好目标后，发给硬件层（环境只管发"IsaacLab 顺序的 21 个目标角 + kp + kd"，怎么变成 SDK 指令是 <code>hw_interface</code> 的事）：</p>
+<span class="code-cap">deploy_xhand/deploy_env.py · _apply_action（环境侧下发）</span>
+<pre><code class="lang-py">self._refresh_lab()                                                # 先读回当前关节角
+self.hw.set_joint_targets(self.cur_targets.squeeze(0).cpu().numpy(),
+                          self.cfg.kp, self.cfg.kd)               # 发目标 + PD 增益
+self.prev_targets = self.cur_targets.clone()                      # 记住这次目标，下步要用</code></pre>
+<p>电机内部按 PD 公式算力矩去逼近目标，这是物理执行的最后一环：</p>
+<div class="math-block">
+$$\tau \;=\; k_p\,(\text{target}-q) \;-\; k_d\,\dot q.$$
+</div>
+
+<h4>硬件层怎么把目标变成真实 Xhand 指令（代码已更新）</h4>
+<p>这是本次代码更新的关键一处。真实 Xhand SDK <strong>没有</strong>"一次设全部关节"的简单接口，而是要为<strong>每一个关节</strong>构造一个 <code>Green_JointCommand_User</code> 对象，再批量下发：</p>
+<span class="code-cap">deploy_xhand/hw_interface.py · set_joint_targets（真实 SDK）</span>
+<pre><code class="lang-py">xt = isaaclab_to_xhand(targets_isaaclab)        # ① 先把 21 个目标翻译成 Xhand 关节顺序
+cmds = []
+for i in range(21):                             # ② 逐关节构造一条指令
+    c = self.hc.Green_JointCommand_User()
+    c.position = float(xt[i])                   #   目标角
+    c.kp = float(kp); c.kd = float(kd)          #   PD 增益
+    c.speed  = float(self.cfg.cmd_speed)        #   ⚠️ 默认 0 很可能=不动！必须显式设非零
+    c.torque = float(self.cfg.cmd_torque)
+    c.mode   = self.cfg.joint_cmd_mode          #   位置控制 mode 取值（B1 真机确认）
+    cmds.append(c)
+self.hand.set_joint_cmd_list(cmds)              # ③ 批量一次性发给手</code></pre>
+<div class="warn">
+<b>新手最易踩的雷：<code>speed</code> 默认 0 可能 = 不动。</b> 很多电机指令结构里 <code>speed=0</code> 不是"不限速"，而是"速度上限为 0 → 关节纹丝不动"。所以代码<b>显式</b>把 <code>cmd_speed</code> 设成非零（占位 350，沿用 SharpaWave 数值）。这个字段的真实单位与语义属于 <span class="badge b1">B1</span> 待真机确认项——如果上电后手"收到指令却不动"，第一个要怀疑的就是它。</div>
+<div class="tip">
+<b>那个 <code>action_scale_mul</code> 是什么？</b> 这是移植版<b>新增</b>的一个安全旋钮（原版 Sharpa 没有，等价于固定为 1.0）。它就是一个 0~1 的"音量键"：第一次上真机时设成 <code>0.3</code>，让手的每一步都只走"三成力气"，确认安全后再调回 <code>1.0</code>。详见<a href="#safety">第十二节安全分级</a>。</div>
+
+<h2 id="remap">八、关节重映射：同一只手，两套编号</h2>
+<div class="intuition">
+IsaacLab（策略说的话）和 Xhand 固件（手听得懂的话）对 21 个关节的<strong>编号顺序不一样</strong>——就像同一支球队，仿真按身高排号、真机按位置排号。发指令前必须"翻译"一下号码，否则你想弯食指，真手却去弯了拇指。</div>
+<p><code>joint_map.py</code> 用两个互为逆的"置换索引"来回翻译：发指令时 IsaacLab→Xhand，读状态时 Xhand→IsaacLab。</p>
+<span class="code-cap">deploy_xhand/joint_map.py</span>
+<pre><code class="lang-py">def isaaclab_to_xhand(v):     # 下发前：策略顺序 → 固件顺序（scatter）
+    out = np.empty_like(v); out[ISAACLAB2XHAND_IDX] = v; return out
+
+def xhand_to_isaaclab(v):     # 读回后：固件顺序 → 策略顺序（gather）
+    return v[ISAACLAB2XHAND_IDX]</code></pre>
+<div class="warn">
+<b>当前是"恒等占位"！</b> 代码里 <code>ISAACLAB2XHAND_IDX = list(range(21))</code> 只是个临时的"原样不动"占位。<span class="badge b2">B2</span> 真机到位后，要用 <code>scripts/inspect_xhand_joints.py</code> 实测出真实的对应关系再替换。这一步搞错，手会做出完全错误的动作。</div>
+
+<div class="viz">
+  <div class="viz-title">关节重映射可视化（21 DOF）</div>
+  <div class="viz-sub">左列 IsaacLab 策略序，右列 Xhand 固件序，连线是 isaaclab→xhand 的对应。悬停任意关节高亮它去了哪儿。当前演示的是"恒等占位"（一一对应），B2 实测后连线会变成交叉的真实排列。</div>
+  <canvas id="remapCanvas"></canvas>
+  <div class="readout" id="remapOut">悬停左/右任意关节，看它映射到对面哪个位置。</div>
+</div>
+
+<h2 id="tactile">九、触觉的 sim-to-real</h2>
+<p>触觉是这个项目的特色，也是现实落差的重灾区。这一节先把"真机的触觉传感器到底是个什么东西"讲透，再讲它怎么和仿真对齐。</p>
+
+<h3 id="tactile-what">真机的触觉传感器是什么东西</h3>
+<div class="intuition">
+你闭着眼也能把手机从口袋里摸出来、能感觉到水杯快滑了赶紧握紧——靠的就是指腹皮肤里成千上万个<strong>触觉感受器</strong>。给机械手装触觉传感器，就是给它的指尖贴上一层<strong>"电子皮肤"</strong>：一小块能测"被压了多重、往哪个方向压"的力敏贴片。没有它，手就像戴着厚手套干活，物体在掌心打滑了都不知道。</div>
+
+<p>具体到本项目的 Xhand 1 Pro，它的触觉系统是这样的（来自 <code>xhandSDK/</code> 官方文档）：</p>
+<div class="symtable">
+  <div class="symtitle">Xhand 1 Pro 触觉硬件构成</div>
+  <table>
+    <thead><tr><th>部件</th><th>数量 / ID</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>掌板</td><td>1 块</td><td>整只手的"主板"，汇总通信</td></tr>
+      <tr><td>指关节板</td><td>21 块</td><td>每个关节一块，带唯一 ID</td></tr>
+      <tr><td>指节触觉传感器</td><td><b>18 个</b></td><td>贴在指节上的"电子皮肤"，每个有唯一 sensor id</td></tr>
+      <tr><td>无触觉的关节</td><td>ID 0/4/8/12/16/20</td><td>这几个指节<b>没有</b>触觉传感器</td></tr>
+      <tr><td>掌心触觉传感器</td><td>ID 30/31/32</td><td>手掌心的 3 个特殊触觉板</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>每个触觉传感器本质是一块小小的<strong>力敏阵列（taxel array）</strong>：表面密布很多个微小感应点（taxel），当指尖压到物体上，贴片发生微小形变，电路把每个点的形变换算成读数。</p>
+
+<div class="warn">
+<b>代码已更新：Xhand 的触觉跟 SharpaWave 完全不是一回事！</b> 我之前按 SharpaWave 的"6 轴力 F6"讲过，但实测真实 Xhand SDK（容器 introspect）后发现结构完全不同，这一节已据此重写。务必记住下面这套 Xhand 的真实模型。</div>
+
+<h3 id="tactile-real">Xhand 触觉的真实数据结构</h3>
+<p>在 Xhand 上，<strong>每根手指有 3 块触觉 pad</strong>（在 SDK 里叫 <code>Haptic_FingerSensors</code>，分别记作 <code>tip / pad1 / pad2</code>，大致是指尖和指腹的两段）。每一块 pad 读出来是一个 <code>Green_Sensor_User</code> 对象，里面信息很丰富：</p>
+<div class="symtable">
+  <div class="symtitle">单块 pad 的数据（Green_Sensor_User 关键字段）</div>
+  <table>
+    <thead><tr><th>字段</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">first_ydds_nf<br>second_ydds_nf</td><td><b>法向力</b>（normal force）：垂直压进皮肤的力，"压得多重"</td></tr>
+      <tr><td class="sym-col">first_ydds_tf<br>second_ydds_tf</td><td><b>切向力</b>（tangential force）：沿皮肤表面的力，"有没有要滑"</td></tr>
+      <tr><td class="sym-col">channelData</td><td><b>taxel 阵列</b>：这块皮肤上每个感应点的原始读数</td></tr>
+      <tr><td class="sym-col">sProxData</td><td>接近觉（还没碰到时就能感到物体靠近）</td></tr>
+      <tr><td class="sym-col">sensor_id</td><td>这块 pad 的唯一编号</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>取数据的接口也变了：不是一次读一个，而是 <code>get_sensor_state_list(True)</code> 一次性把<strong>所有</strong> pad 读回来（再加掌心传感器），返回 <code>(错误码, 消息, pad 列表, 掌心)</code>。</p>
+
+<h3 id="tactile-reduce">从"一堆 pad"到"每指一个数"</h3>
+<p>策略其实只需要回答一个朴素问题：<strong>"这根手指现在压得多紧？"</strong> 所以代码把每根手指那 3 块 pad 的<strong>法向力加起来</strong>，得到一个标量，5 根手指就是 5 个数：</p>
+<div class="math-block">
+$$\text{指}_k\text{的力} \;=\; \sum_{\text{pad}\in\{tip,\,pad1,\,pad2\}} \big(\text{first\_ydds\_nf} + \text{second\_ydds\_nf}\big).$$
+</div>
+<span class="code-cap">deploy_xhand/hw_interface.py · get_tactile_raw（真实 Xhand SDK）</span>
+<pre><code class="lang-py">code, msg, sensors, _palm = self.hand.get_sensor_state_list(True)  # 一次读回所有 pad
+by_id = {int(s.sensor_id): s for s in sensors}                    # 按 sensor_id 建索引
+out = np.zeros(5, dtype=np.float32)
+for k, (tip, pad1, pad2) in enumerate(FINGER_SENSOR_LAYOUT):      # 每指 3 块 pad
+    f = 0.0
+    for sid in (tip, pad1, pad2):
+        s = by_id.get(sid)
+        if s is not None:
+            f += float(s.first_ydds_nf) + float(s.second_ydds_nf)  # 累加法向力
+    out[k] = f                                                    # 这根手指一个标量
+return out                                  # (5,) [拇, 食, 中, 无名, 小]</code></pre>
+<div class="note">
+<b>为什么敢这么狠地降维（从一堆 taxel 阵列压成 5 个数）？</b> 因为"转圆柱"任务策略真正在乎的是"每根手指有没有踩稳、压力够不够"，并不需要知道压在皮肤哪个点、力朝哪个细微方向。降到 5 个标量，<b>更抗噪、也最容易让仿真和真机对齐</b>——这正是它必须和训练时的"5 维指尖力"长一模一样的原因。<br>
+<b>更"正统"的做法（B3 升级项）：</b> SDK 还提供 <code>HapticModel.compute_all_fingers(...)</code>，能把每根手指那几块 pad 的阵列数据更科学地融合成每指一个力（但需要先做 <code>Haptic_Config</code> 标定）。一期先用上面这个"法向力直接相加"的稳妥版本，跑通后再升级。</div>
+
+<h3 id="tactile-align">仿真 ↔ 真机怎么对齐</h3>
+<p>不管真机底层多复杂，最后都对齐成同一个"<strong>5 维指尖力</strong>"，顺序固定为 <code>[拇指, 食指, 中指, 无名指, 小指]</code>。分工很清晰：<code>tactile_map.py</code> 只管"<strong>每指是哪 3 块 pad、5 指什么顺序</strong>"（<code>FINGER_SENSOR_LAYOUT</code>），返回<strong>原始</strong>力；缩放、阈值、二值化这些"加工"全交给 <code>deploy_env.get_tactile_info</code>（这部分逐行照搬 sharpa，没变）：</p>
+<span class="code-cap">deploy_xhand/deploy_env.py · get_tactile_info（真机侧加工，照搬 sharpa）</span>
+<pre><code class="lang-py">force = torch.tensor(self.hw.get_tactile_raw())   # (5,) 原始指尖力（已是每指法向力之和）
+force *= self.cfg.force_scale                     # ×(1/1.5)，缩放到训练量纲
+force[force < self.cfg.contact_threshold] = 0.0   # 噪声门：太小的力当作没碰到
+if self.cfg.binary_contact:                       # 可选：只关心"碰没碰"
+    force = torch.where(force > thresh, 1.0, 0.0)</code></pre>
+<table>
+  <thead><tr><th></th><th>仿真</th><th>真机（Xhand）</th></tr></thead>
+  <tbody>
+    <tr><td>力从哪来</td><td>物理引擎算出的接触净力范数</td><td>每指 3 块 pad 的法向力之和</td></tr>
+    <tr><td>加工</td><td>平滑 + 延迟 + 噪声（第 09 章故意加的）</td><td><code>force_scale</code> 缩放 + 阈值噪声门</td></tr>
+    <tr><td>标定</td><td>无需</td><td>上电先 <b>sensor_clear</b> 把基线归零（按 t）</td></tr>
+  </tbody>
+</table>
+<p><code>force_scale = 1/1.5</code> 的作用就是把真机测到的力<strong>缩放到训练时那把"尺子"的量纲</strong>——仿真里 1 单位力和真机 pad 读出来的数值不一定是一回事，必须乘一个系数对齐，否则策略会觉得"怎么这么使劲/这么没劲"。这个系数也是 B3 真机标定项。</p>
+
+<h3 id="tactile-calib">为什么上电必须先"标定归零"</h3>
+<div class="intuition">
+真实的力敏 pad 有个毛病：明明什么都没碰，读数也不是 0——可能因为出厂偏置、温度变化（手干一会儿会发热）、或装配时的预压。这叫<strong>零点漂移</strong>。标定就是趁手悬空、没碰任何东西时，告诉传感器：<strong>"记住，现在这个读数就算 0。"</strong> 之后的力都相对这个基线来算。不标定，策略会以为指尖一直被按着，从一开始就判断错。</div>
+<p>对应到真实 Xhand SDK，部署里按 <code>t</code> → <code>env.calib_tactile()</code> → <code>hw.calib_tactile()</code>，底层调的是 SDK 的 <code>sensor_clear()</code>（命令行对应 <code>-f sensor_clear</code>，可单个或全部清零）。</p>
+
+<div class="warn">
+<b>占位提醒（真机到位才能定）。</b>
+<span class="badge b3">B3</span> <code>tactile_map.py</code> 里的 <code>FINGER_SENSOR_LAYOUT</code>（每指 tip/pad1/pad2 的 sensor_id）是占位，要实测确认；法向力字段 <code>first_ydds_nf/second_ydds_nf</code> 的语义、是否够用（还是改走 <code>HapticModel</code>）、以及 <code>force_scale</code>/阈值都需真机标定。
+<span class="badge b1">B1</span> <code>get_sensor_state_list</code> 的 bool 参数（是否 flush）等行为，需用 <code>scripts/inspect_xhand_sdk.py</code> 在真机上核对。</div>
+
+<h2 id="warmup">十、先抓稳再转：warm-up 暖启动</h2>
+<div class="intuition">
+学生只会"转"，不会"从零把物体抓起来"——它练习时，物体一开始就已经在手里了。所以真机上策略接管前，得先帮它把物体<strong>抓稳</strong>，摆好起手式。办法很朴素：<strong>回放一段预先录好的"合拢手指"动作，边合边摸，指尖一感觉到接触就停。</strong></div>
+<span class="code-cap">deploy_xhand/deploy_env.py · _reset_idx（warm-up 核心）</span>
+<pre><code class="lang-py">traj = np.load(self.cfg.init_traj_path)        # 预录的抓取轨迹（一帧帧的关节目标）
+tactile_force, _ = self.get_tactile_info()
+j = 0
+self.hw.set_joint_targets(traj[j], kp, kd)
+while torch.max(tactile_force) < self.cfg.grasp_contact_thresh and j + 3 < len(traj):
+    j += 1
+    self.hw.set_joint_targets(traj[j], kp, kd)  # 再合拢一点
+    time.sleep(0.03)
+    tactile_force, _ = self.get_tactile_info()  # 摸一下：抓到了吗？
+# 抓到了！以此刻姿态作为策略的起手式
+grasp = torch.tensor(traj[j + 2])
+self.prev_targets[env_ids] = grasp
+self.cur_targets[env_ids]  = grasp</code></pre>
+<div class="note">
+<b>和原版 Sharpa 的唯一差异。</b> 逻辑完全一致，只是原版直接对固件下发并做 <code>dof_sharpa2isaaclab</code> 转换，移植版改成走 <code>self.hw</code> 接口、轨迹文件换成 <code>cache/deploy_init_traj_xhand.npy</code>。<code>--no_warm_up</code> 或 <code>--dry_run</code> 时会跳过这一步。</div>
+
+<h2 id="statemachine">十一、键盘安全状态机：人始终能接管</h2>
+<div class="intuition">
+真机会伤人伤物，所以默认<strong>绝不自动跑</strong>。程序起来后手是静止的，必须你<strong>亲手按键</strong>才启动，而且随时能冻结、能回零位、能急停。这是不可逾越的安全底线。</div>
+<p><code>env.step</code> 每一步都先看一眼键盘状态标志，决定这一步做什么：</p>
+<span class="code-cap">deploy_xhand/deploy_env.py · step（状态机骨架）</span>
+<pre><code class="lang-py">deploy_state = self.deploy_state_flag.get()
+if   deploy_state == 0:   # 初始 / 回零：手停在全 0 位
+    self.hw.set_joint_targets(np.zeros(21), kp, kd)
+elif deploy_state == 1:   # 冻结：锁住当前角度不动
+    self.hw.set_joint_targets(self.hw.get_joint_pos(), kp, kd)
+elif deploy_state == 2:   # 重置：重新 warm-up 抓取
+    self._reset_idx([0])
+elif deploy_state == 3:   # 运行：真正跑策略动作
+    self._pre_physics_step(action); self._apply_action()</code></pre>
+<table>
+  <thead><tr><th>按键</th><th>动作</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>e</code></td><td>启动策略</td><td>先重新 warm-up 抓一次（置位 2 → <code>_reset_idx</code>），抓稳后自动进入运行态（置位 3）</td></tr>
+    <tr><td><code>w</code></td><td>冻结 / 继续</td><td>锁住当前姿态（再按一次恢复之前的状态），便于观察或临时叫停</td></tr>
+    <tr><td><code>q</code></td><td>回零位</td><td>手回到安全的全 0 姿态</td></tr>
+    <tr><td><code>t</code></td><td>触觉标定</td><td>把指尖力的基线归零</td></tr>
+    <tr><td><code>Ctrl-C</code></td><td>急停</td><td>立刻停手并断连（第四节的 finally 兜底）</td></tr>
+  </tbody>
+</table>
+<p class="muted">按键由后台线程 <code>KeyboardListener</code>（基于 <code>pynput</code>）抓取，通过一个线程安全标志位传给主循环——所以你按键时主循环照常 20Hz 跑，互不阻塞。</p>
+
+<div class="viz">
+  <div class="viz-title">部署状态机（点按钮模拟按键）</div>
+  <div class="viz-sub">e 启动 / w 冻结 / q 回零 / t 触觉标定。高亮当前状态。真机上 Ctrl+C 会安全停手并断连。</div>
+  <div id="smDiagram"></div>
+  <div class="controls" id="smCtl"></div>
+  <div class="readout" id="smOut"></div>
+</div>
+
+<div class="warn">
+<b>代码已更新：键盘需要 pynput + X11，容器里尤其要注意。</b> 抓键盘靠 <code>pynput</code>，而 <code>pynput</code> 要能访问 <strong>X11 图形界面</strong>。在 Docker 容器里跑时，必须：① 主机先 <code>xhost +local:root</code> 放行；② 用 <code>docker-compose</code> 进容器（它挂了 <code>/tmp/.X11-unix</code> 并传了 <code>DISPLAY</code>，见下一节）。<br>
+现在代码做了<strong>友好处理</strong>：如果 <code>keyboard_listen=True</code> 但导入 <code>pynput</code> 或连 X11 失败，会抛出一句<b>清晰的 RuntimeError</b>（告诉你"要么挂 X11、要么加 <code>--no_keyboard</code>"），而不是神秘崩溃。</div>
+<span class="code-cap">deploy_xhand/deploy_env.py · 键盘初始化的友好报错</span>
+<pre><code class="lang-py">if self.cfg.keyboard_listen:
+    try:
+        from rl_isaaclab.utils.keyboard_listener import KeyboardListener
+        from rl_isaaclab.utils.misc import ThreadSafeValue
+    except Exception as e:   # pynput 缺失 / 无 X server 都会到这
+        raise RuntimeError(
+            "keyboard_listen=True 需要 pynput + X 访问(容器用 docker-compose 挂 "
+            "/tmp/.X11-unix 并 `xhost +local:root`)。或用 `--no_keyboard` 自动跑。"
+            f" 原始错误: {e!r}") from e</code></pre>
+<p>如果环境实在没有图形界面（比如机器人板载电脑、SSH 无 X），就用 <code>--no_keyboard</code>：程序会自动 warm-up 抓取后<strong>直接跑策略</strong>，靠 <code>Ctrl-C</code> 急停。真机首跑仍建议配合 <code>--action_scale_mul 0.3</code> 限幅。</p>
+
+<h2 id="safety">十二、安全分级 S0–S4 与待标定项</h2>
+<div class="intuition">
+第一次让 AI 控制一只真手，绝不能"满功率上场"。正确做法像学开车：先在空地上慢慢挪（低速、低力、限幅度），每过一关再放开一点。配置文件 <code>deploy_cfg.py</code> 里就是这些"挡位旋钮"。</div>
+<div class="symtable">
+  <div class="symtitle">deploy_cfg.py · 安全旋钮</div>
+  <table>
+    <thead><tr><th>参数</th><th>值</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">action_scale_mul</td><td>0.3 → 1.0</td><td>动作"音量键"，S2 设 0.3 半力起步，S3 起恢复 1.0</td></tr>
+      <tr><td class="sym-col">kp / kd</td><td>100 / 3</td><td>PD 增益，写进每条 <code>Green_JointCommand_User</code>；<span class="badge b4">B4</span> 系统辨识后更新</td></tr>
+      <tr><td class="sym-col">dof_limits_scale</td><td>0.9</td><td>关节限位收紧到 90%，给关节留安全裕度</td></tr>
+      <tr><td class="sym-col">keyboard_listen</td><td>True</td><td>默认不自动跑，必须人按键启动</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><strong>代码已更新：因为换到了真实 Xhand SDK，新增/变化了几个指令字段</strong>（都在每条 <code>Green_JointCommand_User</code> 里）：</p>
+<div class="symtable">
+  <div class="symtitle">deploy_cfg.py · Xhand 指令新增字段</div>
+  <table>
+    <thead><tr><th>参数</th><th>值</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">joint_cmd_mode</td><td>3</td><td>关节控制模式（位置控制取值）；<span class="badge b1">B1</span> 真机确认</td></tr>
+      <tr><td class="sym-col">cmd_speed</td><td>350.0</td><td><b>⚠️ 默认 0 很可能=不动！</b>必须显式设非零；单位/语义 <span class="badge b1">B1</span> 待确认</td></tr>
+      <tr><td class="sym-col">cmd_torque</td><td>3.0</td><td>每条指令的力矩字段占位；<span class="badge b1">B1</span> 真机确认</td></tr>
+      <tr><td class="sym-col">current_coef<br>speed_coef</td><td>0.3</td><td>SharpaWave 才有的全局限流/限速系数；<b>Xhand SDK 没有</b>，<code>hw_interface</code> 里设为空操作（保留只为接口兼容）</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="note">
+<b>一个容易混淆的点。</b> 旧版（SharpaWave）靠 <code>set_current_coeff/set_speed_coeff</code> 全局限力限速；Xhand 没有这套，限速/限力得走<b>每条指令的 <code>speed/torque</code> 字段</b>或寄存器。所以 env 里仍会调 <code>set_speed_coeff/set_current_coeff</code>（照搬 sharpa 不改逻辑），但在 Xhand 的 <code>hw_interface</code> 里它们是 <code>pass</code>（什么都不做）。</div>
+<p>代码里还有四处明确标注的"<strong>真机到位才能填</strong>"的占位，看到这些徽章就知道那行不是最终值：</p>
+<p>
+  <span class="badge b1">B1</span> SDK 行为（<code>Green_JointCommand_User</code> 的 mode/speed/torque 取值与语义、<code>get_*_state_list</code> 的 bool 参数、<code>comm.open()</code> 成功枚举名）&nbsp;&nbsp;
+  <span class="badge b2">B2</span> 关节顺序映射（<code>joint_map.py</code>）&nbsp;&nbsp;
+  <span class="badge b3">B3</span> 触觉 <code>FINGER_SENSOR_LAYOUT</code>、法向力字段语义、缩放/阈值（<code>tactile_map.py</code> / cfg）&nbsp;&nbsp;
+  <span class="badge b4">B4</span> PD 增益 kp/kd 系统辨识
+</p>
+
+<h2 id="dryrun">十三、没有真手也能跑：dry-run / FakeHW</h2>
+<p>这是 approach A 最甜的果实。<code>fake_hw.py</code> 是一个和真硬件层<strong>接口完全一致</strong>的"假手"：你问它关节角，它返回一组 0；你发指令，它默默记下。于是整条部署链路在没有真手时也能完整跑通：</p>
+<span class="code-cap">deploy_xhand/fake_hw.py（节选）</span>
+<pre><code class="lang-py">class FakeHWInterface:
+    def get_joint_pos(self):  return self._pos.copy()    # 假装返回当前关节角
+    def get_tactile_raw(self): return self._tac.copy()   # 假装返回 5 指力
+    def set_joint_targets(self, targets, kp, kd):
+        self.last_targets = targets.copy()               # 只记录，不真的动</code></pre>
+<span class="code-cap">离线 dry-run（无硬件、无 pynput 也能跑）</span>
+<pre><code class="lang-py">python -m rl_isaaclab.deploy_xhand.deploy_xhand \
+    --dry_run --max_steps 50 \
+    --load_path ckpts/scale_1000M/student_t603.pth</code></pre>
+<div class="tip">
+<b>为什么这很重要？</b> 它让你能在<b>买到真手之前</b>就验证：观测维度对不对、策略能不能加载、循环会不会崩。仓库里的 <code>tests/deploy_xhand/</code> 自动化测试就全靠它——用假手喂各种状态，断言观测拼装、关节映射、推理输出都正确。<b>先在假手上跑通，再上真手，能避开 90% 的低级事故。</b></div>
+
+<h2 id="docker">十四、为什么要用 Docker 容器部署（新增）</h2>
+<div class="intuition">
+你可能会问：直接在自己电脑上 <code>python deploy_xhand.py</code> 不就行了？偏偏不行。厂商给的 Xhand SDK（那个 <code>.deb</code> 和 <code>hand_controller</code> 包）是<strong>专门给 Ubuntu 22.04 编译</strong>的，依赖 <code>libfmt.so.8</code> 这类特定版本的系统库；而本机是 Ubuntu 24.04（库版本对不上），<strong>根本装不上</strong>。Docker 就是一个"<strong>随身携带的、装好 Ubuntu 22.04 的小盒子</strong>"——在盒子里 SDK 开箱即用，还不污染你的主系统，将来原样搬到机器人板载电脑也能跑。</div>
+
+<p>这套容器放在新增的 <code>deploy_docker/</code> 目录里。设计上分得很清楚——<strong>哪些东西烤进镜像、哪些运行时才挂载</strong>：</p>
+<table>
+  <thead><tr><th></th><th>内容</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr><td><b>烤进镜像</b><br>（build 时）</td><td>Ubuntu 22.04 + Xhand 系统 SDK(.deb) + Python 绑定(hand_controller) + CPU 版 torch + pynput</td><td>这些很少变、装一次就好；换了它们才需重新 <code>build.sh</code></td></tr>
+    <tr><td><b>运行时挂载</b><br>（run 时）</td><td>整个项目仓库（含代码、<code>ckpts/</code> t603 权重、<code>cache/</code> 关节表与暖启动轨迹）→ <code>/workspace</code></td><td><b>改部署代码立即生效，不用重建镜像</b></td></tr>
+  </tbody>
+</table>
+<div class="note">
+<b>为什么是 CPU 版 torch（没装 GPU）？</b> 因为学生策略很小、Xhand 触觉又是直接读 taxel 阵列（不像 SharpaWave 那种需要 CUDA 跑视觉触觉），所以推理用 CPU 就够，镜像更瘦、也不用伺候 GPU 驱动。这也是本容器相比 SharpaWave 容器<b>去掉了 nvidia runtime</b> 的原因。</div>
+
+<h3 id="docker-two">两种进容器方式</h3>
+<p>对应"真机还没到"和"真机到了要用键盘"两种场景：</p>
+<table>
+  <thead><tr><th>方式</th><th>适合</th><th>特点</th></tr></thead>
+  <tbody>
+    <tr><td><code>./run.sh [设备]</code></td><td>离线验证 / 简单跑</td><td>单容器、快；<code>/dev/ttyUSB0</code> 不存在时自动跳过串口透传，所以真机没到也能进；无 X11 → 配 <code>--no_keyboard</code></td></tr>
+    <tr><td><code>docker compose</code></td><td>真机正式跑（推荐）</td><td>host 网络 + <code>privileged</code> 透传串口 + <b>挂 X11（键盘 e/w/q 需要）</b> + 挂仓库</td></tr>
+  </tbody>
+</table>
+<span class="code-cap">deploy_docker/ · 真机正式跑（带键盘）</span>
+<pre><code class="lang-py">./build.sh                                              # 一次性：构建镜像 xhand-deploy:22.04
+xhost +local:root                                       # 放行容器访问 X11（键盘需要）
+docker compose -f deploy_docker/docker-compose.yml up -d
+docker exec -it xhand_deploy bash
+# 容器内（默认开键盘：e 启动 / w 冻结 / q 回零 / t 标定 / Ctrl-C 急停）：
+python -m rl_isaaclab.deploy_xhand.deploy_xhand --action_scale_mul 0.3   # S2 半力起步</code></pre>
+<div class="symtable">
+  <div class="symtitle">docker-compose 几个关键配置都为了啥</div>
+  <table>
+    <thead><tr><th>配置</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">privileged: true</td><td>把主机串口 <code>/dev/ttyUSB*</code> 透传进容器，免去权限问题</td></tr>
+      <tr><td class="sym-col">network_mode: host</td><td>串口够用即可；二期若改 EtherCAT（裸网卡实时）也需要</td></tr>
+      <tr><td class="sym-col">/tmp/.X11-unix 挂载<br>DISPLAY 环境变量</td><td>让容器里的 <code>pynput</code> 能抓到键盘（依赖 X11）</td></tr>
+      <tr><td class="sym-col">..:/workspace</td><td>把项目根挂进去；改代码即时生效</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="tip">
+<b>串起来看。</b> 容器解决"SDK 装不上"，<code>run.sh</code> 解决"真机没到也能验证"，<code>docker-compose</code> 解决"真机到了还要用键盘安全控制"。三者配合，正好覆盖从"镜像自检"→"离线 dry-run"→"真机分级上手"的完整链路。</div>
+
+<h2 id="cheatsheet">十五、真机上手清单与命令速查</h2>
+<p>把前面所有零件串成一条"从开机到转起来"的操作线（命令用 README 推荐的 <code>python -m</code> 模块形式，在容器 <code>/workspace</code> 里跑）：</p>
+<div class="timeline">
+  <div class="step"><h4>① 建镜像 + 镜像自检（真机没到也能做）</h4>
+    <p>容器里确认 SDK 能 import，不需要硬件。</p>
+    <pre><code class="lang-py">cd deploy_docker && ./build.sh           # 产出 xhand-deploy:22.04
+./run.sh                                  # 进容器（无串口也能进）
+python -c "import hand_controller"        # SDK 绑定能导入即 OK</code></pre></div>
+  <div class="step"><h4>② 离线 dry-run（无硬件、用假手）</h4>
+    <p>把整条推理链路跑通，确认不崩、维度对，并跑测试。</p>
+    <pre><code class="lang-py">python -m rl_isaaclab.deploy_xhand.deploy_xhand --dry_run --max_steps 20
+python -m pytest tests/deploy_xhand/ -q</code></pre></div>
+  <div class="step"><h4>③ 半力首跑（S2，接真手）</h4>
+    <p>用 docker-compose 进容器（有 X11、键盘可用），动作只走三成力气。</p>
+    <pre><code class="lang-py">xhost +local:root
+docker compose -f deploy_docker/docker-compose.yml up -d
+docker exec -it xhand_deploy bash
+python -m rl_isaaclab.deploy_xhand.deploy_xhand --comm serial --action_scale_mul 0.3</code></pre></div>
+  <div class="step"><h4>④ 上电后按键序</h4>
+    <p>先 <code>t</code> 标定触觉 → 按 <code>e</code>（会先自动 warm-up 抓稳再运行）→ 不对劲随时 <code>w</code> 冻结 / <code>q</code> 回零 / <code>Ctrl-C</code> 急停。无 X11 时改用 <code>--no_keyboard</code> 自动跑。</p></div>
+  <div class="step"><h4>⑤ 全力运行（S3+）</h4>
+    <p>确认稳定后恢复 <code>--action_scale_mul 1.0</code>，并回填 B1–B4 标定值。</p></div>
+</div>
+
+<h3 id="checklist">Sim-to-Real 排错清单</h3>
+<div class="card">
+<ul style="margin:0">
+  <li><b>环境</b>：在 22.04 容器里跑（SDK 装得上）？<code>import hand_controller</code> 成功？串口透传了？</li>
+  <li><b>观测对齐</b>：单帧 62 维的含义/量纲/顺序与训练一致？关节用了同一个 <code>unscale</code>？</li>
+  <li><b>归一化统计</b>：<code>running_mean_std</code> 与 <code>sa_mean_std</code> 都加载了且处于 eval？</li>
+  <li><b>关节重映射</b>：B2 实测值已回填？下发用 isaaclab→xhand、读取用 xhand→isaaclab，没搞反？</li>
+  <li><b>动作下发</b>：<code>Green_JointCommand_User</code> 的 <code>speed</code> 设了非零（默认 0 可能=不动）？<code>mode</code> 是位置控制取值？</li>
+  <li><b>触觉</b>：B3 的 <code>FINGER_SENSOR_LAYOUT</code> 对了？上电先 <code>sensor_clear</code> 标定？<code>force_scale</code> 对齐到训练量纲？</li>
+  <li><b>动作幅度</b>：取均值（<code>act_inference</code>）而非采样？首跑用了 <code>action_scale_mul=0.3</code>？限位收了 0.9 裕度？</li>
+  <li><b>安全</b>：warm-up 抓稳了再跑？键盘能冻结/回零（或 <code>--no_keyboard</code> + Ctrl-C）？</li>
+</ul>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> 部署的本质就一句话：<b>act → step 的无限循环</b>。难点全在"让真手的每个数字对齐训练时的样子"——于是有了观测拼装、关节重映射、触觉缩放、归一化加载。再加上 warm-up 抓取解决"起手式"、键盘状态机与安全分级守住"不伤人伤物"、FakeHW 让"没真手也能验证"。原版 Sharpa 提供了被验证过的逻辑模板，Xhand 移植版逐行照抄并把"碰硬件"隔离进一个可替换的小盒子。至此，从训练好的 <code>.pth</code> 到真手转起物体，整条路你已经能逐行讲清了。</div>
+
+<div class="pager">
+  <a href="11-sim-to-real.html"><div class="dir">← 上一章</div><div class="ttl">11 · Sim-to-Real 实战</div></a>
+  <a class="next" href="13-project-map.html"><div class="dir">下一章 →</div><div class="ttl">13 · 项目地图（代码导读）</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 12 章 · 部署到真机逐行精讲</footer>
+
+<script>
+/* ---------- 五零件架构图（悬停） ---------- */
+(function () {
+  const info = {
+    entry:  ['入口 deploy_xhand.py', '组装 hw / env / runner 三大零件，跑 act→step 主循环，用 try/finally 兜住 Ctrl-C 急停后断连。'],
+    env:    ['环境 deploy_env.py', '心脏：20Hz 节拍、把传感器拼成 186 维观测、键盘状态机 e/w/q/t、warm-up 抓取。全程用 IsaacLab 顺序。'],
+    runner: ['大脑 policy_runner.py', '加载学生策略 student_t603，归一化观测与历史后取动作均值，夹到 ±1。无 Isaac 依赖、可 CPU。'],
+    hw:     ['硬件层 hw_interface.py / fake_hw.py', '唯一碰 Xhand SDK 的地方；对外暴露 IsaacLab 顺序的状态/指令。可换成 FakeHW 离线跑。'],
+    map:    ['翻译 joint_map.py / tactile_map.py', '关节编号 IsaacLab↔Xhand 互译（B2）；把触觉板组装成 5 指原始力（B3）。'],
+  };
+  const A='#0071e3', G='#34c759', T='#30c8c9', O='#ff9f0a', P='#af52de';
+  function box(x,y,w,h,label,key,fill){
+    return `<g class="abox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="13" fill="${fill}" stroke="rgba(0,0,0,0.06)"></rect>
+      <text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" font-size="13.5" font-weight="600" fill="#fff">${label}</text></g>`;
+  }
+  function arrow(x1,y1,x2,y2,dashed){
+    return `<path d="M${x1},${y1} L${x2},${y2}" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#ah12)" ${dashed?'stroke-dasharray="5 5"':''}></path>`;
+  }
+  const svg = `
+  <svg viewBox="0 0 920 360" role="img" aria-label="部署五零件架构图">
+    <defs><marker id="ah12" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path></marker></defs>
+    ${box(360,20,200,56,'入口 deploy_xhand.py','entry',A)}
+    ${box(60,150,210,60,'大脑 policy_runner.py','runner',T)}
+    ${box(650,150,210,60,'环境 deploy_env.py','env',G)}
+    ${box(650,260,210,56,'硬件层 hw_interface','hw',O)}
+    ${box(360,260,210,56,'翻译 joint/tactile_map','map',P)}
+    ${arrow(420,76,200,148)}
+    ${arrow(500,76,720,148)}
+    ${arrow(270,185,648,185)}
+    <text x="300" y="178" font-size="11" fill="var(--text-faint)">act: obs → 动作</text>
+    ${arrow(700,210,700,258)}
+    ${arrow(648,288,572,288)}
+    <text x="500" y="240" font-size="11" fill="var(--text-faint)">关节/触觉顺序互译</text>
+    ${arrow(150,210,150,250)}
+    <text x="160" y="245" font-size="11" fill="var(--text-faint)">step: 动作 → 新 obs</text>
+    ${arrow(360,278,160,212,true)}
+  </svg>`;
+  const host = document.getElementById('partsDiagram'); host.innerHTML = svg;
+  const out = document.getElementById('partsOut');
+  host.querySelectorAll('.abox').forEach(g=>{
+    g.addEventListener('mouseenter', ()=>{ const d=info[g.dataset.k]; if(d) out.innerHTML='<b>'+d[0]+'。</b> '+d[1]; });
+  });
+})();
+
+/* ---------- 控制循环数据流（悬停） ---------- */
+(function () {
+  const info = {
+    sense:['读传感器','env._refresh_lab + get_tactile_info：从 hw 读回 21 关节角 + 5 指尖力。'],
+    obs:['观测 (186)','最近 3 帧 × 62 拼成；另留 30 帧历史给学生 TConv。'],
+    act:['策略推理','PolicyRunner.act：归一化 → act_inference 取均值 → clamp 到 ±1。'],
+    a:['动作 a (21)','每个关节"在上次目标上微调多少"的增量，范围 ±1。'],
+    tgt:['关节目标 (21)','target += (1/24)·mul·a，再夹到关节限位。'],
+    motor:['下发电机','isaaclab→xhand 重映射后 set_joint_targets，PD 驱动；睡到满 1/20 秒。'],
+  };
+  const A='#0071e3', T='#30c8c9', G='#34c759', O='#ff9f0a';
+  function b(x,y,w,label,key,fill){
+    return `<g class="lbox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="46" rx="11" fill="${fill}"></rect>
+      <text x="${x+w/2}" y="${y+28}" text-anchor="middle" font-size="12.5" font-weight="600" fill="#fff">${label}</text></g>`;
+  }
+  function ar(x1,x2,y){ return `<path d="M${x1},${y} L${x2},${y}" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#lh12)"></path>`; }
+  const svg = `<svg viewBox="0 0 900 170" role="img" aria-label="控制循环数据流">
+    <defs><marker id="lh12" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path></marker></defs>
+    ${b(10,60,120,'读传感器','sense',A)}
+    ${b(160,60,120,'观测 186','obs',A)}
+    ${b(310,60,120,'策略推理','act',T)}
+    ${b(460,60,110,'动作 ±1','a',T)}
+    ${b(600,60,130,'关节目标','tgt',G)}
+    ${b(760,60,130,'下发电机','motor',O)}
+    ${ar(130,158,83)}
+    ${ar(280,308,83)}
+    ${ar(430,458,83)}
+    ${ar(570,598,83)}
+    ${ar(730,758,83)}
+    <path d="M825,106 C825,150 80,150 70,108" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#lh12)" stroke-dasharray="5 5"></path>
+    <text x="445" y="146" font-size="11" fill="var(--text-faint)" text-anchor="middle">下一帧：循环回到"读传感器"（整圈 1/20 秒）</text>
+  </svg>`;
+  const host = document.getElementById('loopFlow'); host.innerHTML = svg;
+  const out = document.getElementById('loopOut');
+  host.querySelectorAll('.lbox').forEach(g=>{
+    g.addEventListener('mouseenter', ()=>{ const d=info[g.dataset.k]; if(d) out.innerHTML='<b>'+d[0]+'。</b> '+d[1]; });
+  });
+})();
+
+/* ---------- 关节重映射（21 DOF，悬停） ---------- */
+(function () {
+  const cv = document.getElementById('remapCanvas');
+  const out = document.getElementById('remapOut');
+  const N = 21;
+  const MAP = Array.from({length:N}, (_,i)=>i);   // 恒等占位（B2 实测后替换）
+  let ctx, hoverL = -1, hoverR = -1;
+  function layout(){ const H=cv._cssH, top=24, bot=H-12; const rowH=(bot-top)/(N-1); return {top, rowH}; }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const {top, rowH} = layout();
+    const lx = 60, rx = W-60;
+    Viz.text(ctx,'IsaacLab 序', lx, 14, T.accent,'12px -apple-system','center');
+    Viz.text(ctx,'Xhand 固件序', rx, 14, T.green,'12px -apple-system','center');
+    for(let i=0;i<N;i++){
+      const yL = top + i*rowH, yR = top + MAP[i]*rowH;
+      const hot = (hoverL===i)||(hoverR===MAP[i]);
+      ctx.strokeStyle = hot ? T.orange : T.grid;
+      ctx.lineWidth = hot ? 2.5 : 1; ctx.globalAlpha = hot?1:0.5;
+      ctx.beginPath(); ctx.moveTo(lx+18, yL); ctx.bezierCurveTo((lx+rx)/2, yL, (lx+rx)/2, yR, rx-18, yR); ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+    for(let i=0;i<N;i++){
+      const yL=top+i*rowH;
+      ctx.fillStyle = (hoverL===i)?T.orange:T.accent; Viz.dot(ctx, lx, yL, 4, ctx.fillStyle);
+      Viz.text(ctx, i.toString(), lx-12, yL+4, T.faint,'10px monospace','right');
+    }
+    for(let j=0;j<N;j++){
+      const yR=top+j*rowH; ctx.fillStyle=(hoverR===j)?T.orange:T.green; Viz.dot(ctx, rx, yR, 4, ctx.fillStyle);
+      Viz.text(ctx, j.toString(), rx+12, yR+4, T.faint,'10px monospace','left');
+    }
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 420); draw(); }
+  Viz.onRedraw(init);
+  cv.addEventListener('mousemove', e=>{
+    const r=cv.getBoundingClientRect(); const x=e.clientX-r.left, y=e.clientY-r.top;
+    const {top,rowH}=layout(); const idx=Math.round((y-top)/rowH);
+    hoverL=hoverR=-1;
+    if(idx>=0&&idx<N){
+      if(x < cv._cssW/2){ hoverL=idx; out.innerHTML=`IsaacLab 关节 <b>${idx}</b> → Xhand 关节 <b>${MAP[idx]}</b>。下发指令时这样翻译（当前为恒等占位）。`; }
+      else { hoverR=idx; const src=MAP.indexOf(idx); out.innerHTML=`Xhand 关节 <b>${idx}</b> ← IsaacLab 关节 <b>${src}</b>。读回状态时反向翻译。`; }
+    }
+    draw();
+  });
+  cv.addEventListener('mouseleave', ()=>{ hoverL=hoverR=-1; out.innerHTML='悬停左/右任意关节，看它映射到对面哪个位置。'; draw(); });
+})();
+
+/* ---------- 部署状态机 ---------- */
+(function () {
+  let state = 'home';
+  const meta = {
+    home:  ['回零位 (q)', 'var(--text-faint)', '手停在全 0 位、静止。安全初始态。先按 t 标定触觉，再按 e 启动策略。'],
+    run:   ['运行策略 (e)', 'var(--green)', '学生策略在线推理、驱动手指旋转物体。按 w 冻结、按 q 回零。'],
+    freeze:['冻结 (w)', 'var(--orange)', '锁住当前关节角不动。便于观察或临时叫停。按 e 继续、按 q 回零。'],
+    calib: ['触觉标定 (t)', 'var(--accent)', '把 5 指触觉力的基线归零。上电后、启动前务必做一次。完成后回到当前态。'],
+  };
+  function bx(x,y,key,active){
+    const m=meta[key]; const op=active?1:0.35;
+    return `<g opacity="${op}"><rect x="${x}" y="${y}" width="150" height="54" rx="14" fill="${m[1]}"></rect>
+      <text x="${x+75}" y="${y+32}" text-anchor="middle" font-size="13.5" font-weight="600" fill="#fff">${m[0]}</text></g>`;
+  }
+  function render(){
+    const svg = `<svg viewBox="0 0 660 210" role="img" aria-label="部署状态机">
+      ${bx(40,75,'home',state==='home')}
+      ${bx(255,20,'run',state==='run')}
+      ${bx(255,135,'freeze',state==='freeze')}
+      ${bx(470,75,'calib',state==='calib')}
+      <path d="M195,90 L253,52" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh12)"></path>
+      <text x="212" y="60" font-size="12" fill="var(--green)">e</text>
+      <path d="M335,76 L335,133" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh12)"></path>
+      <text x="341" y="108" font-size="12" fill="var(--orange)">w</text>
+      <path d="M312,133 L312,78" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh12)"></path>
+      <text x="286" y="108" font-size="12" fill="var(--green)">e</text>
+      <path d="M255,160 C150,182 120,140 110,132" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh12)"></path>
+      <text x="185" y="180" font-size="12" fill="var(--text-faint)">q</text>
+      <path d="M190,100 L468,100" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#sh12)" opacity="0.5"></path>
+      <text x="330" y="94" font-size="12" fill="var(--accent)">t</text>
+      <defs><marker id="sh12" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path></marker></defs>
+    </svg>`;
+    document.getElementById('smDiagram').innerHTML = svg;
+    document.getElementById('smOut').innerHTML = '<b>'+meta[state][0]+'。</b> '+meta[state][2];
+  }
+  const ctl = document.getElementById('smCtl');
+  Viz.button(ctl, 'e · 启动', ()=>{ state='run'; render(); });
+  Viz.button(ctl, 'w · 冻结', ()=>{ state='freeze'; render(); }, true);
+  Viz.button(ctl, 'q · 回零', ()=>{ state='home'; render(); }, true);
+  Viz.button(ctl, 't · 标定', ()=>{ state='calib'; render(); }, true);
+  render();
+})();
+</script>
+</body>
+</html>

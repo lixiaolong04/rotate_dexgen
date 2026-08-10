@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>20 · PPO 训练循环代码</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 20 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 20 · algo/ppo/</div>
+  <h1>PPO 训练循环代码</h1>
+  <p class="sub">把<a href="05-ppo.html">第 05 章</a>的裁剪目标与<a href="04-gae.html">第 04 章</a>的 GAE，逐函数对照到 <code>ppo.py</code> 与 <code>experience.py</code>。读完本章，你能画出一次 <code>train_epoch()</code> 里数据怎么流、损失怎么算。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>前置阅读。</b> 第 19 章讲 wrapper 如何把 IsaacLab 环境变成 PPO 能用的 <code>reset()/step()</code> 字典；本章假设观测里已有 <code>obs</code>、<code>priv_info</code>。公式推导见 Part A，本章只讲<strong>代码落点</strong>。</div>
+
+<div class="glossary">
+  <h4>本章术语表</h4>
+  <dl>
+    <dt>epoch（训练轮）</dt>
+    <dd>一次完整的「采样 + 更新」周期。不是指跑完整个数据集一遍，而是 PPO 里的一次 <code>train_epoch()</code>。</dd>
+    <dt>horizon_length</dt>
+    <dd>每次更新前向环境收集的步数，默认 <strong>8</strong>。代码里 <code>for n in range(8)</code> 的 n 就是 0…7。</dd>
+    <dt>rollout / play_steps</dt>
+    <dd>用当前策略在环境里「玩」若干步，把轨迹存进 ExperienceBuffer。也叫 on-policy 采样。</dd>
+    <dt>ExperienceBuffer</dt>
+    <dd>轨迹记账本，形状 <code>(8, N, dim)</code>。8 是时间步，N 是并行 env 数。</dd>
+    <dt>GAE（广义优势估计）</dt>
+    <dd>从奖励和价值函数反推「这步动作比平均好多少」（advantage）。实现函数 <code>computer_return()</code>。</dd>
+    <dt>mini_epochs</dt>
+    <dd>同一批 rollout 数据重复训练几轮（默认 5），每轮切多个 minibatch 做梯度下降。</dd>
+    <dt>agent_steps</dt>
+    <dd>累计环境步数计数器，每 epoch 加 <code>batch_size = 8 × N</code>，达到 <code>max_agent_steps</code> 停止。</dd>
+    <dt>shaped_rewards</dt>
+    <dd>进 GAE 的奖励，= 原始 reward × 0.01，超时步再加 bootstrap 项。</dd>
+  </dl>
+</div>
+
+<h2 id="semester">零、train() 像「for 学期 in 大学四年」</h2>
+<div class="intuition">
+把 RL 训练想成上大学：<br>
+• <code>train()</code> 的外层 <code>while</code> = <strong>整个大学生涯</strong>，直到学分修满（<code>max_agent_steps</code>）才毕业。<br>
+• 每次循环里的 <code>train_epoch()</code> = <strong>一个学期</strong>：先实习采集经验（<code>play_steps</code>），再回校上课改网络（PPO 更新）。<br>
+• <code>epoch_num += 1</code> = 学期编号 +1；<code>write_stats</code> = 期末成绩单写 TensorBoard；<code>save best.pth</code> = 历史最佳作品入档案。<br>
+学期与学期之间<strong>不断档</strong>——上一学期最后一天的环境状态，就是下一学期第一天的起点（不会整校 reset，除非某个 env done 了）。
+</div>
+
+<div class="ask-box">
+  <b>问：为什么叫 epoch 不叫 iteration？</b> 历史沿袭 RLGames 命名。在本项目里 epoch ≈ 一次 PPO 更新周期，与深度学习「遍历数据集一遍」的 epoch 含义不同。
+</div>
+
+<h2 id="horizon-analogy">horizon_length = 8 是什么意思？</h2>
+<div class="intuition">
+<strong>类比：拍一段 8 帧的短视频再复盘。</strong> 策略不会每动一下就立刻改参数——那样太噪、太不稳定。PPO 的做法是：先让 N 个并行 env 各连续走 <strong>8 步</strong>，录下这 8 帧里每一步的观测、动作、奖励、价值估计；8 步走完后，用 GAE 给整段录像「打分」（算 advantage），再用这些分数改网络。<br><br>
+为什么是 8 而不是 80？<strong>偏差–方差权衡</strong>：看得太短，不知道动作长期后果；看得太长，旧策略采的数据和新策略差太远（on-policy 失效）。8 是 in-hand manipulation 论文与 RLGames 默认值，对本项目够用。改大 → 每次更新前采集更久、显存占用线性增；改小 → 更新更频繁但 GAE 更噪。
+</div>
+
+<table>
+  <thead><tr><th>数字</th><th>含义</th><th>Xhand 默认（N=16384）</th></tr></thead>
+  <tbody>
+    <tr><td>horizon_length = 8</td><td>每 epoch 每个 env 走 8 步</td><td>—</td></tr>
+    <tr><td>batch_size = 8 × N</td><td>一次 rollout 总 transition 数</td><td>131,072</td></tr>
+    <tr><td>minibatch_size</td><td>每次梯度步样本数</td><td>min(8×N, 32768)</td></tr>
+    <tr><td>mini_epochs = 5</td><td>同一批数据训 5 轮</td><td>梯度步 ≈ 5 × (batch/minibatch)</td></tr>
+  </tbody>
+</table>
+
+<h2 id="map">一、两个文件的分工</h2>
+<div class="intuition">
+<code>PPO</code> 类是"总指挥"：决定何时采样、何时更新、何时存 checkpoint。<code>ExperienceBuffer</code> 是"记账本"：把 8 步 × N 个并行环境的轨迹存成张量，再算 GAE、切成 minibatch 喂给优化器。可以把一次 epoch 想成：<strong>先跑 8 步收集经验，再拿这些数据改网络 5 轮（mini_epochs）</strong>。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">文件 ↔ 职责</div>
+  <table>
+    <thead><tr><th>文件</th><th>核心类/函数</th><th>职责</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>algo/ppo/ppo.py</code></td><td><code>PPO</code></td><td>初始化、<code>train()</code> 主循环、<code>play_steps()</code> 采样、<code>train_epoch()</code> 更新</td></tr>
+      <tr><td class="sym-col"><code>algo/ppo/experience.py</code></td><td><code>ExperienceBuffer</code></td><td>轨迹存储、<code>computer_return()</code> GAE、<code>prepare_training()</code> 展平与标准化优势</td></tr>
+      <tr><td class="sym-col"><code>algo/ppo/ppo.py</code></td><td><code>AdaptiveScheduler</code></td><td>KL 超阈值则 lr÷1.5，过低则 lr×1.5（见<a href="05-ppo.html#kl-lr">05 章第七节</a>）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="init">二、<code>__init__</code>：搭好舞台</h2>
+<p><code>PPO.__init__(env, output_dir, full_config)</code> 从 YAML（<code>ppo_cfg.yaml</code>）读超参，构建 Actor-Critic、归一化器、优化器与经验池。</p>
+
+<div class="symtable">
+  <div class="symtitle">默认超参（ppo_cfg.yaml · Xhand）</div>
+  <table>
+    <thead><tr><th>代码字段</th><th>默认值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">num_actors</td><td>= <code>--num_envs</code>（默认 16384）</td><td>并行环境数，与 <code>train.py</code> 里 CLI 覆盖一致</td></tr>
+      <tr><td class="sym-col">horizon_length</td><td><strong>8</strong></td><td>每次更新前收集的步数；timeline 的 t=0…7 即这 8 步</td></tr>
+      <tr><td class="sym-col">batch_size</td><td>8 × num_actors</td><td>一次 rollout 的总 transition 数</td></tr>
+      <tr><td class="sym-col">minibatch_size</td><td>min(8×num_envs, 32768)</td><td>每次梯度步的样本数；<code>train.py</code> 会按显存自动 cap</td></tr>
+      <tr><td class="sym-col">mini_epochs</td><td>5</td><td>同一批数据重复训练 5 轮</td></tr>
+      <tr><td class="sym-col">gamma / tau</td><td>0.99 / 0.95</td><td>折扣因子与 GAE 的 λ（代码里叫 <code>tau</code>）</td></tr>
+      <tr><td class="sym-col">e_clip</td><td>0.2</td><td>PPO 裁剪半径 ε</td></tr>
+      <tr><td class="sym-col">value_bootstrap</td><td>True</td><td>超时截断时用 Critic 价值 bootstrap（见<a href="#bootstrap">第四节</a>）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">ppo.py · __init__（节选）</span>
+<pre><code class="lang-py">self.model = ActorCritic(net_config)          # proprio_adapt=False → Stage 1 教师
+self.running_mean_std = RunningMeanStd(self.obs_shape)
+self.value_mean_std = RunningMeanStd((1,))
+self.storage = ExperienceBuffer(
+    self.num_actors, self.horizon_length, self.batch_size, self.minibatch_size,
+    self.obs_shape[0], self.actions_num, self.priv_info_dim, self.device,
+)
+self.horizon_length = self.ppo_config['horizon_length']   # 8
+self.batch_size = self.horizon_length * self.num_actors</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">__init__ 节选 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>ActorCritic(net_config)</code></td><td>创建策略+价值网络。Stage 1 时 <code>proprio_adapt=False</code>，走 env_mlp(priv_info)。</td></tr>
+      <tr><td><code>RunningMeanStd((186,))</code></td><td>观测在线归一化器，训练时更新均值方差。</td></tr>
+      <tr><td><code>RunningMeanStd((1,))</code></td><td>价值归一化器，稳定 Critic 目标量级。</td></tr>
+      <tr><td><code>ExperienceBuffer(...)</code></td><td>预分配 <code>(8, N, dim)</code> 张量池，避免每步 malloc。</td></tr>
+      <tr><td><code>batch_size = 8 * num_actors</code></td><td>每 epoch 新增的环境步数，也是 agent_steps 的增量。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>输出目录：<code>stage1_nn/</code> 存 checkpoint，<code>stage1_tb/</code> 写 TensorBoard。Stage 2 蒸馏用 <code>padapt.py</code>，见<a href="21-networks-padapt.html">第 21 章</a>。</p>
+
+<h2 id="train">三、<code>train()</code>：外层无限循环</h2>
+<div class="intuition">
+<code>train()</code> 只做三件事循环：<strong>① 调一次 <code>train_epoch()</code>（采样+更新）② 写 TensorBoard ③ 按规则存 checkpoint</strong>，直到 <code>agent_steps >= max_agent_steps</code>（默认 3e8）。
+</div>
+
+<span class="code-cap">ppo.py · train()</span>
+<pre><code class="lang-py">def train(self):
+    self.obs = self.env.reset()
+    self.agent_steps = self.batch_size          # 初始计步偏移
+
+    while self.agent_steps &lt; self.max_agent_steps:
+        self.epoch_num += 1
+        a_losses, c_losses, b_losses, entropies, kls = self.train_epoch()
+        self.storage.data_dict = None           # 释放上一 epoch 的展平缓存
+
+        self.write_stats(...)                   # TensorBoard
+        # save_freq / best reward → stage1_nn/*.pth</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">train() · 逐行 walk-through</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>self.obs = self.env.reset()</code></td><td>拿到初始 obs_dict（经 Wrapper 翻译）。整个训练生涯的起点观测。</td></tr>
+      <tr><td><code>self.agent_steps = self.batch_size</code></td><td>计步器初始偏移 = 8×N。这样第一次 epoch 结束后 agent_steps 对齐「已采集过一批」。</td></tr>
+      <tr><td><code>while ... max_agent_steps</code></td><td>主循环：默认 3 亿步环境交互后停止（约数千 epoch）。</td></tr>
+      <tr><td><code>self.epoch_num += 1</code></td><td>学期编号 +1，用于日志和 checkpoint 文件名。</td></tr>
+      <tr><td><code>train_epoch()</code></td><td>一学期全部工作：play_steps + GAE + 5 轮 PPO 更新。返回各 loss 列表。</td></tr>
+      <tr><td><code>storage.data_dict = None</code></td><td>释放展平后的 (8N,) 缓存，省显存。</td></tr>
+      <tr><td><code>write_stats(...)</code></td><td>写 TensorBoard：actor/critic loss、KL、FPS 等。</td></tr>
+      <tr><td><code>save best / last</code></td><td>按 save_freq 存定期档；mean reward 创新高则存 best.pth。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>注意：<code>self.obs</code> 在 epoch 之间<strong>不断档</strong>——上一 epoch 的 <code>play_steps</code> 结束时环境已经前进了 8 步，下一 epoch 直接从当前观测继续，不会重新 <code>reset()</code>（除非某个 env 在本 epoch 内 done 后被环境内部 reset）。</p>
+
+<h2 id="train-epoch">四、<code>train_epoch()</code>：采样 + 更新</h2>
+<p>一个 epoch 分两段，计时分别累加到 <code>data_collect_time</code> 与 <code>rl_train_time</code>：</p>
+
+<div class="timeline">
+  <div class="step"><h4>① set_eval + play_steps()</h4><p>用当前策略采样 8 步，写入 ExperienceBuffer，算 GAE</p></div>
+  <div class="step"><h4>② set_train + mini_epochs 循环</h4><p>遍历 <code>len(storage)</code> 个 minibatch，算 PPO loss，backward，Adam step</p></div>
+  <div class="step"><h4>③ 每个 mini_epoch 末</h4><p>算平均 KL → AdaptiveScheduler 调 lr</p></div>
+</div>
+
+<h3 id="play-steps">4.1 <code>play_steps()</code>：horizon=8 的 rollout</h3>
+<p>循环 <code>for n in range(self.horizon_length)</code>，即 n = 0, 1, …, 7。每一步做：</p>
+<ol>
+  <li><code>model_act(self.obs)</code> — 归一化 obs，Actor 采样动作，Critic 估价值</li>
+  <li>把 obs、priv_info、action、neglogp、value、μ、σ 写入 buffer 第 n 行</li>
+  <li><code>env.step(actions)</code> — 经 wrapper 进 Isaac Sim 物理</li>
+  <li>奖励塑形 + 可选 bootstrap，写入 buffer</li>
+</ol>
+
+<span class="code-cap">ppo.py · play_steps() 完整核心</span>
+<pre><code class="lang-py">for n in range(self.horizon_length):          # n = 0 … 7
+    res_dict = self.model_act(self.obs)
+    self.storage.update_data('obses', n, self.obs['obs'])
+    self.storage.update_data('priv_info', n, self.obs['priv_info'])
+    for k in ['actions', 'neglogpacs', 'values', 'mus', 'sigmas']:
+        self.storage.update_data(k, n, res_dict[k])
+
+    actions = torch.clamp(res_dict['actions'], -1.0, 1.0)
+    self.obs, rewards, self.dones, infos = self.env.step(actions)
+    rewards = rewards.unsqueeze(1)
+
+    self.storage.update_data('dones', n, self.dones)
+    shaped_rewards = 0.01 * rewards.clone()
+    if self.value_bootstrap and 'time_outs' in infos:
+        shaped_rewards += self.gamma * res_dict['values'] * infos['time_outs'].unsqueeze(1).float()
+    self.storage.update_data('rewards', n, shaped_rewards)
+
+    # ... episode 统计、extra_info 日志 ...
+
+res_dict = self.model_act(self.obs)
+last_values = res_dict['values']
+self.agent_steps += self.batch_size
+self.storage.computer_return(last_values, self.gamma, self.tau)
+self.storage.prepare_training()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">play_steps 循环内 · 每一行在干什么（n = 0…7 重复 8 次）</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>for n in range(self.horizon_length)</code></td><td>8 帧短视频的帧号。n=0 是第一帧，n=7 是第八帧。</td></tr>
+      <tr><td><code>res_dict = self.model_act(self.obs)</code></td><td>用<strong>当前</strong> obs 做策略前向：采样动作 aₙ、估价值 Vₙ、记录 μₙ σₙ neglogpₙ。<strong>先 act 再 step</strong>——存的是 step 前的 (sₙ, aₙ)。</td></tr>
+      <tr><td><code>update_data('obses', n, self.obs['obs'])</code></td><td>把 186 维观测写入 buffer 第 n 行。shape → (N, 186)。</td></tr>
+      <tr><td><code>update_data('priv_info', n, ...)</code></td><td>8 维特权信息，教师 env_mlp 的输入。</td></tr>
+      <tr><td><code>update_data actions/neglogp/values/mus/sigmas</code></td><td>策略输出全套，更新阶段算 PPO ratio 要用旧 neglogp 和旧 μ σ。</td></tr>
+      <tr><td><code>actions = torch.clamp(..., -1.0, 1.0)</code></td><td>执行前再夹一遍，与 Wrapper clip 双保险。</td></tr>
+      <tr><td><code>self.env.step(actions)</code></td><td>物理推进一步。返回新 obs_dict → 覆盖 <code>self.obs</code>；rewards (N,)；dones (N,)。</td></tr>
+      <tr><td><code>rewards.unsqueeze(1)</code></td><td>(N,) → (N, 1)，与 buffer 里 rewards 形状对齐。</td></tr>
+      <tr><td><code>update_data('dones', n, self.dones)</code></td><td>记录哪些 env 在本步 episode 结束。GAE 里 <code>1-dones</code> 截断未来价值。</td></tr>
+      <tr><td><code>shaped_rewards = 0.01 * rewards</code></td><td>奖励缩放，让 Critic 拟合 ~0.1 量级数值。策略梯度方向不变。</td></tr>
+      <tr><td><code>+ gamma * V * time_outs</code></td><td>超时截断时补 bootstrap：episode 没真失败，未来价值不应当 0。</td></tr>
+      <tr><td><code>update_data('rewards', n, shaped_rewards)</code></td><td>进 GAE 的是 shaped 奖励，不是原始 reward。</td></tr>
+      <tr><td><code>current_rewards += rewards</code></td><td>用<strong>原始</strong> reward 累计 episode 统计（TensorBoard 用）。</td></tr>
+      <tr><td><code>done_indices = self.dones.nonzero(...)</code></td><td>找出本步结束的 env，更新滑动平均 episode reward/length。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">play_steps 循环外 · 8 步跑完后的收尾</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>res_dict = self.model_act(self.obs)</code></td><td>对<strong>第 8 步之后</strong>的新观测再估一次 V，作为 V₈（horizon 外 bootstrap）。</td></tr>
+      <tr><td><code>last_values = res_dict['values']</code></td><td>GAE 逆推时 t=7 的 next_values 用这个，而不是 buffer 里不存在的 t=8。</td></tr>
+      <tr><td><code>self.agent_steps += self.batch_size</code></td><td>本学期学分 +8×N。train() 的 while 条件看这个数字。</td></tr>
+      <tr><td><code>computer_return(last_values, gamma, tau)</code></td><td>从 t=7 倒推到 t=0 算 GAE advantage 和 returns。</td></tr>
+      <tr><td><code>prepare_training()</code></td><td>(8,N,dim) 展平成 (8N,dim)，标准化 advantage，准备 minibatch 索引。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="warn">
+<b>奖励为什么要 ×0.01？</b> 环境原始奖励量级可达几十（旋转进度 + 正则项累加）。Critic 若直接拟合大数值，梯度不稳定。缩放到 ~0.1 量级后，价值网络更好学；<strong>策略梯度方向不变</strong>（整体乘常数），但 GAE 的 δ 与 returns 数值更健康。部署时不涉及奖励，无影响。
+</div>
+
+<div class="ask-box">
+  <b>问：为什么先 model_act 再 env.step，而不是反过来？</b> 标准 RL 记法：在状态 sₙ 下选动作 aₙ，执行后到达 sₙ₊₁ 得 rₙ。buffer 存的是 (sₙ, aₙ, rₙ, V(sₙ))。若先 step 再 act，存的就变成 sₙ₊₁ 上的决策，GAE 时间对齐会乱。
+</div>
+
+<h3 id="bootstrap">4.2 Value Bootstrap（超时截断）</h3>
+<p>手内旋转是<strong>无限 horizon</strong> 任务（<code>is_finite_horizon=False</code>）。episode 因达到 <code>max_episode_length</code> 被截断时，并非真正"失败"，不应把未来价值当 0。Wrapper 把 <code>truncated</code> 放进 <code>extras['time_outs']</code>：</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py · step()</span>
+<pre><code class="lang-py">if not self.unwrapped.cfg.is_finite_horizon:
+    extras["time_outs"] = truncated</code></pre>
+<p>PPO 在塑形奖励上追加 bootstrap 项：</p>
+<div class="math-block">
+$$\tilde r_t \;=\; 0.01\, r_t \;+\; \gamma\, V(s_t)\,\mathbb{1}[\text{timeout}_t].$$
+</div>
+
+<h3 id="last-value">4.3 循环结束后：末态价值 + GAE</h3>
+<p>8 步跑完后，再对<strong>当前</strong> <code>self.obs</code> 调一次 <code>model_act</code> 得到 <code>last_values</code>，作为 horizon 末步的 $V(s_{T+1})$：</p>
+<span class="code-cap">ppo.py · play_steps() 尾部</span>
+<pre><code class="lang-py">res_dict = self.model_act(self.obs)
+last_values = res_dict['values']
+self.agent_steps += self.batch_size
+self.storage.computer_return(last_values, self.gamma, self.tau)
+self.storage.prepare_training()</code></pre>
+
+<h3 id="ppo-loss">4.4 PPO 损失（更新段）</h3>
+<p><code>set_train()</code> 后，对 <code>mini_epochs</code> × minibatch 双重循环：</p>
+<span class="code-cap">ppo.py · train_epoch() · PPO loss</span>
+<pre><code class="lang-py">ratio = torch.exp(old_action_log_probs - action_log_probs)   # r(θ)
+surr1 = advantage * ratio
+surr2 = advantage * torch.clamp(ratio, 1.0 - self.e_clip, 1.0 + self.e_clip)
+a_loss = torch.max(-surr1, -surr2)
+
+value_pred_clipped = value_preds + (values - value_preds).clamp(-self.e_clip, self.e_clip)
+c_loss = torch.max((values - returns) ** 2, (value_pred_clipped - returns) ** 2)
+
+loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef \
+       + b_loss * self.bounds_loss_coef
+loss.backward()
+torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+self.optimizer.step()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">PPO loss 计算 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>ratio = exp(old_neglogp - new_neglogp)</code></td><td>新策略相对旧策略的概率比 r(θ)。<code>old_action_log_probs</code> 实际存的是 neglogp。</td></tr>
+      <tr><td><code>surr1 / surr2 / max</code></td><td>PPO 裁剪目标：限制 ratio 在 [1-ε, 1+ε]，防止一步更新太猛。</td></tr>
+      <tr><td><code>c_loss clipped</code></td><td>Critic 也做 value clipping，与 05 章公式一致。</td></tr>
+      <tr><td><code>- entropy * coef</code></td><td>熵奖励，鼓励探索。coef 默认 0 时此项为 0。</td></tr>
+      <tr><td><code>b_loss * bounds_loss_coef</code></td><td>可选：惩罚 μ 超出 soft_bound=1.1，防止动作饱和。</td></tr>
+      <tr><td><code>clip_grad_norm_</code></td><td>梯度裁剪，默认 max_norm=1.0，防爆炸。</td></tr>
+      <tr><td><code>policy_kl → scheduler</code></td><td>每个 mini_epoch 末算平均 KL，超 2×阈值则 lr÷1.5。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="buffer">五、ExperienceBuffer：函数级导读</h2>
+
+<h3 id="storage-shape">5.1 存储布局</h3>
+<p><code>storage_dict</code> 每个键的形状都是 <code>(horizon_length, num_envs, …)</code>，即 <code>(8, N, dim)</code>。</p>
+
+<div class="symtable">
+  <div class="symtitle">storage_dict 各字段</div>
+  <table>
+    <thead><tr><th>键</th><th>shape（示意，N=num_envs）</th><th>写入时机</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">obses</td><td>(8, N, 186)</td><td>step 前，当前观测</td></tr>
+      <tr><td class="sym-col">priv_info</td><td>(8, N, 8)</td><td>特权信息（教师用）</td></tr>
+      <tr><td class="sym-col">actions, mus, sigmas</td><td>(8, N, 21)</td><td>采样动作与分布参数</td></tr>
+      <tr><td class="sym-col">neglogpacs</td><td>(8, N)</td><td>负对数概率（按动作维求和）</td></tr>
+      <tr><td class="sym-col">values</td><td>(8, N, 1)</td><td>Critic 输出</td></tr>
+      <tr><td class="sym-col">rewards, dones</td><td>(8, N, 1) / (8, N)</td><td>塑形奖励与终止标志</td></tr>
+      <tr><td class="sym-col">returns</td><td>(8, N, 1)</td><td>GAE 之后填入</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="update-data">5.2 <code>update_data(name, index, val)</code></h3>
+<span class="code-cap">experience.py</span>
+<pre><code class="lang-py">def update_data(self, name, index, val):
+    self.storage_dict[name][index,:] = val</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">update_data · 一行代码的含义</div>
+  <table>
+    <thead><tr><th>参数</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>存哪个字段：'obses'、'rewards'、'actions' 等。</td></tr>
+      <tr><td><code>index</code></td><td>时间步 n（0…7）。第一维索引。</td></tr>
+      <tr><td><code>val</code></td><td>形状 (N, dim) 或 (N,)，写入 <code>storage_dict[name][n, :]</code>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="gae-code">5.3 <code>computer_return()</code>：GAE 实现</h3>
+<span class="code-cap">experience.py · computer_return()</span>
+<pre><code class="lang-py">def computer_return(self, last_values, gamma, tau):
+    last_gae_lam = 0
+    mb_advs = torch.zeros_like(self.storage_dict['rewards'])
+    for t in reversed(range(self.transitions_per_env)):    # 7 → 0
+        if t == self.transitions_per_env - 1:
+            next_values = last_values
+        else:
+            next_values = self.storage_dict['values'][t + 1]
+        next_nonterminal = 1.0 - self.storage_dict['dones'].float()[t]
+        next_nonterminal = next_nonterminal.unsqueeze(1)
+        delta = self.storage_dict['rewards'][t] \
+              + gamma * next_values * next_nonterminal \
+              - self.storage_dict['values'][t]
+        mb_advs[t] = last_gae_lam = delta + gamma * tau * next_nonterminal * last_gae_lam
+        self.storage_dict['returns'][t] = mb_advs[t] + self.storage_dict['values'][t]</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">computer_return · 逆序循环逐行（t = 7 → 0）</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>for t in reversed(range(8))</code></td><td>从最后一帧往前算。GAE 需要知道「后面」的 advantage 才能算「前面」的。</td></tr>
+      <tr><td><code>t==7 → next_values = last_values</code></td><td>第 8 帧之后没有 buffer 里的 V，用 play_steps 末尾 extra model_act 的 V₈。</td></tr>
+      <tr><td><code>else → values[t+1]</code></td><td>t&lt;7 时，下一状态价值已在 buffer 里（step 前估的 V）。</td></tr>
+      <tr><td><code>next_nonterminal = 1 - dones</code></td><td>done=1 的 env 不 bootstrap 未来（episode 真结束）。</td></tr>
+      <tr><td><code>delta = r + γV' - V</code></td><td>TD 误差 δₜ。用的是 shaped reward。</td></tr>
+      <tr><td><code>mb_advs[t] = δ + γλ(1-d)Â_next</code></td><td>GAE 递推。λ=tau=0.95。</td></tr>
+      <tr><td><code>returns[t] = adv + values[t]</td><td>回报 Rₜ = Âₜ + V(sₜ)，Critic 回归目标。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="math-block">
+$$\delta_t = \tilde r_t + \gamma V_{t+1}(1-d_t) - V_t, \qquad
+\hat A_t = \delta_t + \gamma\lambda(1-d_t)\hat A_{t+1}, \qquad
+R_t = \hat A_t + V_t.$$
+</div>
+
+<h3 id="prepare">5.4 <code>prepare_training()</code>：展平 + 标准化优势</h3>
+<span class="code-cap">experience.py</span>
+<pre><code class="lang-py">def transform_op(arr):
+    return arr.transpose(0, 1).reshape(s[0] * s[1], *s[2:])
+
+def prepare_training(self):
+    for k, v in self.storage_dict.items():
+        self.data_dict[k] = transform_op(v)
+    advantages = self.data_dict['returns'] - self.data_dict['values']
+    self.data_dict['advantages'] = ((advantages - advantages.mean())
+                                    / (advantages.std() + 1e-8)).squeeze(1)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">prepare_training · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>transpose(0,1).reshape</code></td><td>(8, N, dim) → (8×N, dim)。把「8 步 × N env」打平成一个大 batch。</td></tr>
+      <tr><td><code>advantages = returns - values</code></td><td>原始 advantage，尚未标准化。</td></tr>
+      <tr><td><code>(adv - mean) / std</code></td><td>零均值单位方差，稳定 PPO 梯度。+1e-8 防除零。</td></tr>
+      <tr><td><code>len(storage) = batch // minibatch</code></td><td>决定 train_epoch 内层 for 循环次数。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="model-act">六、辅助：<code>model_act()</code> 与归一化</h2>
+<span class="code-cap">ppo.py · model_act()</span>
+<pre><code class="lang-py">def model_act(self, obs_dict):
+    processed_obs = self.running_mean_std(obs_dict['obs'])
+    input_dict = {'obs': processed_obs, 'priv_info': obs_dict['priv_info']}
+    res_dict = self.model.act(input_dict)          # 采样，含探索
+    res_dict['values'] = self.value_mean_std(res_dict['values'], True)  # 反归一化存 buffer
+    return res_dict</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">model_act · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>running_mean_std(obs)</code></td><td>play_steps 时 model.eval() + RMS.eval()，只归一化不更新统计。</td></tr>
+      <tr><td><code>model.act(...)</code></td><td>高斯采样探索。返回 actions, neglogpacs, values, mus, sigmas。</td></tr>
+      <tr><td><code>value_mean_std(..., unnorm=True)</code></td><td>价值<strong>反</strong>归一化后再存 buffer，GAE 与原始 reward 量级一致。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>采样阶段 <code>model.eval()</code>；更新阶段 <code>model.train()</code>，obs 在 minibatch 里再过 <code>running_mean_std</code> 且处于 train 模式以更新均值方差。详见<a href="08-normalization.html">第 08 章</a>。</p>
+
+<h2 id="checkpoint">七、存盘与恢复</h2>
+<span class="code-cap">ppo.py · save / restore_train</span>
+<pre><code class="lang-py">weights = {'model': self.model.state_dict(),
+           'running_mean_std': self.running_mean_std.state_dict(),
+           'value_mean_std': self.value_mean_std.state_dict()}
+torch.save(weights, f'{name}.pth')</code></pre>
+
+<div class="ask-box">
+  <b>问：best.pth 按什么标准选？</b> 滑动窗口平均 episode reward（<code>episode_rewards</code> meter）超过历史最佳，且 epoch 数 ≥ <code>save_best_after</code>。不是单步瞬时 reward。
+</div>
+
+<h2 id="debug">八、读日志时看什么</h2>
+<table>
+  <thead><tr><th>TensorBoard 键</th><th>对应代码</th><th>异常信号</th></tr></thead>
+  <tbody>
+    <tr><td>losses/actor_loss</td><td><code>a_loss</code></td><td>长期不降 → 学习率或 e_clip</td></tr>
+    <tr><td>losses/critic_loss</td><td><code>c_loss</code></td><td>爆炸 → 检查 reward×0.01 是否生效</td></tr>
+    <tr><td>info/kl</td><td><code>policy_kl</code></td><td>持续 &gt; 2×kl_threshold → lr 会被压</td></tr>
+    <tr><td>episode_rewards/step</td><td>原始 reward 滑动平均</td><td>与 best checkpoint 决策相关</td></tr>
+    <tr><td>performance/EnvStepFPS</td><td>采样耗时</td><td>num_envs 过大时 GPU 物理瓶颈</td></tr>
+  </tbody>
+</table>
+
+<h2 id="train-epoch-walk">九、train_epoch() 完整两阶段</h2>
+<span class="code-cap">ppo.py · train_epoch() 结构</span>
+<pre><code class="lang-py">def train_epoch(self):
+    _t = time.time()
+    self.set_eval()
+    self.play_steps()
+    self.data_collect_time += (time.time() - _t)
+
+    _t = time.time()
+    self.set_train()
+    for _ in range(self.mini_epochs_num):       # 5 轮
+        ep_kls = []
+        for i in range(len(self.storage)):    # batch/minibatch 次
+            # ... PPO loss, backward, step ...
+            ep_kls.append(kl)
+        av_kls = torch.mean(torch.stack(ep_kls))
+        self.last_lr = self.scheduler.update(self.last_lr, av_kls.item())
+    self.rl_train_time += (time.time() - _t)
+    return a_losses, c_losses, b_losses, entropies, kls</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">train_epoch · 逐段</div>
+  <table>
+    <thead><tr><th>代码段</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>set_eval(); play_steps()</code></td><td>采样阶段：网络 eval，RMS 不更新，只收集数据。</td></tr>
+      <tr><td><code>data_collect_time += ...</code></td><td>累计采样耗时，TensorBoard 算 EnvStepFPS。</td></tr>
+      <tr><td><code>set_train()</code></td><td>更新阶段：网络 train，RMS 在 minibatch 里更新统计。</td></tr>
+      <tr><td><code>for mini_epochs</code></td><td>同一批 8N 数据重复训 5 遍，提高样本利用率。</td></tr>
+      <tr><td><code>for len(storage)</code></td><td>每个 minibatch 一次梯度步。N=16384 时约 5×4=20 次 step/epoch。</td></tr>
+      <tr><td><code>scheduler.update(lr, kl)</code></td><td>每个 mini_epoch 末根据 KL 调 lr，防策略突变。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="adaptive">十、AdaptiveScheduler 与 KL 刹车</h2>
+<span class="code-cap">ppo.py · AdaptiveScheduler</span>
+<pre><code class="lang-py">def update(self, current_lr, kl_dist):
+    lr = current_lr
+    if kl_dist > (2.0 * self.kl_threshold):      # 默认 threshold=0.008
+        lr = max(current_lr / 1.5, self.min_lr)
+    if kl_dist < (0.5 * self.kl_threshold):
+        lr = min(current_lr * 1.5, self.max_lr)
+    return lr</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">AdaptiveScheduler.update · 逐行</div>
+  <table>
+    <thead><tr><th>条件</th><th>动作</th></tr></thead>
+    <tbody>
+      <tr><td>KL &gt; 2×0.008 = 0.016</td><td>策略变化太猛 → lr ÷ 1.5，最低 1e-6</td></tr>
+      <tr><td>KL &lt; 0.5×0.008 = 0.004</td><td>策略几乎没变 → lr × 1.5，最高 1e-2</td></tr>
+      <tr><td>中间区域</td><td>lr 保持不变</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>问：policy_kl 怎么算的？</b> 用更新后新 μ,σ 与 buffer 里旧 μ,σ 算高斯 KL 解析式（<code>policy_kl()</code> 函数），对动作维求和再 batch 平均。不是采样估计。
+</div>
+
+<h2 id="value-norm">十一、play_steps 末尾的价值归一化</h2>
+<span class="code-cap">ppo.py · play_steps 尾部（value normalize）</span>
+<pre><code class="lang-py">if self.normalize_value:
+    self.value_mean_std.train()
+    values = self.value_mean_std(values)
+    returns = self.value_mean_std(returns)
+    self.value_mean_std.eval()
+self.storage.data_dict['values'] = values
+self.storage.data_dict['returns'] = returns</code></pre>
+
+<div class="intuition">
+若开启 <code>normalize_value</code>，GAE 算完后会把 values 和 returns 再过一遍 value_mean_std，让 Critic 回归目标与网络输出在同一归一化空间。默认配置下此项可能关闭，以 yaml 为准。
+</div>
+
+<h2 id="faq">十二、FAQ</h2>
+
+<div class="ask-box">
+  <b>问：--num_envs 10 时 batch_size 多少？</b> 8×10=80。每 epoch 只采 80 条 transition，minibatch_size 也被 train.py cap 到 80，更新很快但样本少，适合调试显存。
+</div>
+
+<div class="ask-box">
+  <b>问：能否 horizon_length=1？</b> 理论上可以，但 GAE 几乎退化成单步 TD，advantance 方差极大，训练不稳定。不建议低于 4。
+</div>
+
+<h2 id="timing">十三、epoch 计时字段</h2>
+<p>PPO 在 <code>__init__</code> 初始化三个计时器：<code>data_collect_time</code>（play_steps）、<code>rl_train_time</code>（backward 段）、<code>all_time</code>。TensorBoard 的 EnvStepFPS = agent_steps / data_collect_time，反映<strong>采样吞吐</strong>而非整体吞吐。</p>
+
+<div class="ask-box">
+  <b>问：Last FPS 和 EnvStepFPS 区别？</b> train() 打印的 Last FPS = 最近一个 epoch 的 batch_size / epoch_wall_time。EnvStepFPS 是累计 agent_steps / 累计 data_collect_time。后者更能看长期采样效率。
+</div>
+
+<div class="ask-box"> 21 维独立高斯，log prob 对各维相加得联合 log prob。PPO ratio 用标量 log prob 比，所以 <code>log_prob(...).sum(1)</code> 得 (N,) 而非 (N,21)。
+</div>
+
+<div class="ask-box">
+  <b>问：storage.update_mu_sigma 干什么？</b> 每个 mini_epoch 更新后，把新 μ,σ 写回 data_dict 对应 minibatch 区间，供下一 mini_epoch 算 KL 时与「上一轮更新后的策略」对比。实现上是在线策略迭代的近似。
+</div>
+
+<details class="tryit">
+  <summary>对照源码快速定位</summary>
+  <div class="tryit-body">
+    <pre><code>rg "def train|def play_steps|def train_epoch|computer_return" \
+  era_dexhand_lab/rl_isaaclab/algo/ppo/</code></pre>
+    <p>建议打开 <code>ppo.py</code> 与 <code>experience.py</code> 并排：左栏 <code>play_steps</code> 循环，右栏 <code>computer_return</code> 倒序循环，逐步对照 04 章公式。</p>
+  </div>
+</details>
+
+<div class="tip">
+<b>本章小结。</b> 一次 PPO epoch = 一个「学期」：<code>play_steps</code> 拍 8 帧短视频（horizon=8，reward×0.01，timeout bootstrap）+ GAE 复盘 + 5 轮 minibatch PPO 改网络。ExperienceBuffer 先按 (8,N) 存，再展平成 (8N) 训练。下一章进入 <code>models.py</code> 与 Stage 2 蒸馏。</div>
+
+<div class="pager">
+  <a href="19-wrapper-layer.html"><div class="dir">← 上一章</div><div class="ttl">19 · Wrapper 适配层</div></a>
+  <a class="next" href="21-networks-padapt.html"><div class="dir">下一章 →</div><div class="ttl">21 · 网络与 ProprioAdapt</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 20 章 · PPO 训练循环</footer>
+</body>
+</html>

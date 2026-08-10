@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>22 · 一步训练全链路 Capstone</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 22 章 · Capstone</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 22 · Part B 收官</div>
+  <h1>一步训练全链路 Capstone</h1>
+  <p class="sub">把 Part B（13–21）收成一条时间线：从 <code>reset</code> 到 <code>backward</code>，逐步标注<strong>谁调用谁、张量 shape、此时 CPU/GPU 在干什么</strong>。再与<a href="12-deploy-walkthrough.html">第 12 章</a>部署循环对照，给出改参连锁反应表与 20 条过关 checklist。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>本章范围。</b> 以 Stage 1 PPO、<code>horizon_length=8</code>、<code>num_envs=N</code>（如 10 或 16384）为例。Stage 2 蒸馏是"每步 MSE + step"，见<a href="21-networks-padapt.html">第 21 章</a>，不在此 timeline 展开。</div>
+
+<div class="glossary">
+  <h4>本章术语表</h4>
+  <dl>
+    <dt>Capstone（收官章）</dt>
+    <dd>把前面各章碎片拼成一条完整时间线，从命令行到 backward 逐步复盘。</dd>
+    <dt>PhysX</dt>
+    <dd>Isaac Sim 内置 GPU 物理引擎。step 里最耗时的部分，通常占满 GPU 算力。</dd>
+    <dt>host ↔ device</dt>
+    <dd>CPU 内存 ↔ GPU 显存。本项目张量尽量常驻 GPU，避免每步 cudaMemcpy。</dd>
+    <dt>set_eval / set_train</dt>
+    <dd>play_steps 前 eval（采样不更新 BN/RMS）；更新段 train（RMS 更新统计量）。</dd>
+    <dt>minibatch backward</dt>
+    <dd>8 步采集完成后，把 8N 条数据切块，每块算 loss 并 backward。主要在 GPU 上跑 cuBLAS。</dd>
+    <dt>TF32</dt>
+    <dd>train.py 开启的 TensorFloat-32 加速，Ampere+ GPU 矩阵乘更快，对 RL 通常可接受。</dd>
+  </dl>
+</div>
+
+<h2 id="overview">一、一个 PPO epoch 在干什么</h2>
+<div class="intuition">
+一次 <code>train_epoch()</code> = <strong>8 步集体采样</strong> + <strong>GAE 算账</strong> + <strong>5 轮梯度更新</strong>。可以把它想成：N 个学徒同时练 8 拍动作，录成视频；教练回放视频，每段剪辑改一点点招式（PPO 裁剪），改 5 遍。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">参与模块（按时间顺序）</div>
+  <table>
+    <thead><tr><th>顺序</th><th>模块</th><th>文件</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td class="sym-col">train.py 入口</td><td><code>scripts/train.py</code></td></tr>
+      <tr><td>1</td><td class="sym-col">GymStyleEnvWrapper</td><td><code>wrapper/sharpa_wave_env_wrapper.py</code></td></tr>
+      <tr><td>2</td><td class="sym-col">XhandWaveInhandRotateEnv</td><td><code>tasks/inhand_rotate/xhand_wave_env.py</code></td></tr>
+      <tr><td>3</td><td class="sym-col">PPO.play_steps / train_epoch</td><td><code>algo/ppo/ppo.py</code></td></tr>
+      <tr><td>4</td><td class="sym-col">ExperienceBuffer + GAE</td><td><code>algo/ppo/experience.py</code></td></tr>
+      <tr><td>5</td><td class="sym-col">ActorCritic + RunningMeanStd</td><td><code>algo/models/</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="hw-overview">二、CPU 与 GPU 分工总览</h2>
+<div class="intuition">
+训练时<strong>GPU 是主力</strong>：PhysX 物理、PyTorch 前向/反向、张量 buffer 都在 CUDA 上。CPU 负责：启动 Isaac Sim、Python 调度循环、TensorBoard 写盘、打印日志。瓶颈几乎总在 <strong>GPU 物理 + 采样</strong>，不是 CPU 算力。
+</div>
+
+<table>
+  <thead><tr><th>阶段</th><th>主要设备</th><th>在干什么</th></tr></thead>
+  <tbody>
+    <tr><td>train.py 启动</td><td>CPU</td><td>解析参数、Hydra 加载配置、启动 Omniverse App</td></tr>
+    <tr><td>gym.make + reset</td><td>GPU</td><td>创建 N 个并行 env，PhysX 初始化 articulation</td></tr>
+    <tr><td>play_steps · model_act</td><td>GPU</td><td>cuBLAS 矩阵乘：RMS + ActorCritic 前向</td></tr>
+    <tr><td>play_steps · env.step</td><td>GPU</td><td>PhysX 子步积分、接触、奖励、观测写入 GPU tensor</td></tr>
+    <tr><td>computer_return (GAE)</td><td>GPU</td><td>纯张量逆序循环，8 步 × N env，很快</td></tr>
+    <tr><td>train_epoch · backward</td><td>GPU</td><td>PPO loss 反传，Adam 更新权重</td></tr>
+    <tr><td>write_stats / save</td><td>CPU + 磁盘</td><td>标量 .item() 到 CPU，写 TensorBoard / .pth</td></tr>
+  </tbody>
+</table>
+
+<h2 id="timeline">三、时间线 t = 0 … 7（play_steps 内）</h2>
+<p>下表是<strong>单个 epoch 内</strong> <code>for n in range(8)</code> 的 8 次迭代。每步结构相同，只是 n 递增、<code>self.obs</code> 已是上一步物理输出。</p>
+
+<div class="symtable">
+  <div class="symtitle">t = 0 … 7 逐步：调用链 + shape + CPU/GPU</div>
+  <table>
+    <thead><tr><th>时刻</th><th>谁调用谁</th><th>关键 shape</th><th>CPU / GPU</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="sym-col"><strong>t=0 ① model_act</strong></td>
+        <td><code>PPO.model_act(self.obs)</code><br>→ RMS(obs) → ActorCritic.act</td>
+        <td>obs (N,186) → μ (N,21), V (N,1)</td>
+        <td><strong>GPU</strong>：PyTorch 前向，eval 模式</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=0 ② 写 buffer</strong></td>
+        <td><code>storage.update_data(..., n=0)</code></td>
+        <td>写入 storage_dict 第 0 行，(N,·)</td>
+        <td><strong>GPU</strong>：原地拷贝到预分配 tensor，无 CPU 参与</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=0 ③ clamp</strong></td>
+        <td><code>torch.clamp(actions, -1, 1)</code></td>
+        <td>(N, 21)</td>
+        <td><strong>GPU</strong>：元素级算子</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=0 ④ Wrapper step</strong></td>
+        <td><code>GymStyleEnvWrapper.step</code><br>→ clamp → IsaacLab env.step</td>
+        <td>actions (N,21) in → obs_dict out</td>
+        <td><strong>GPU</strong>：Wrapper 仅 clamp/别名；主要耗时在下一步</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=0 ⑤ PhysX 物理</strong></td>
+        <td><code>xhand_wave_env</code>：PD 力矩、接触、奖励、更新 hist</td>
+        <td>rew (N,)；dones (N,)；obs (N,186)</td>
+        <td><strong>GPU 满载</strong>：PhysX 子步 + 传感器 + reward kernel。通常占 play_steps 80%+ 时间</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=0 ⑥ 奖励入账</strong></td>
+        <td><code>shaped = 0.01*r + γV·timeout</code><br><code>update_data('rewards', 0, ...)</code></td>
+        <td>rewards (N,1)</td>
+        <td><strong>GPU</strong>：张量算术；V 来自步骤①的 res_dict</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=1 … 6</strong></td>
+        <td colspan="3">与 t=0 完全同构。self.obs 已是 s₁…s₆。<strong>GPU 时间线重复</strong>：前向 → PhysX → 写 buffer。</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>t=7 ①–⑥</strong></td>
+        <td colspan="3">最后一帧采样，同上。buffer 第 7 行填满。</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>post ⑦ last_values</strong></td>
+        <td><code>model_act(self.obs)</code> 估 V₈</td>
+        <td>V (N,1)</td>
+        <td><strong>GPU</strong>：额外一次前向，无 env.step</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>post ⑧ GAE</strong></td>
+        <td><code>computer_return(last_values, γ, τ)</code> t=7→0</td>
+        <td>returns (8,N,1)</td>
+        <td><strong>GPU</strong>：小循环，毫秒级</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>post ⑨ flatten</strong></td>
+        <td><code>prepare_training()</code></td>
+        <td>(8,N,d) → (8N,d)</td>
+        <td><strong>GPU</strong>：view/reshape，不搬 CPU</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>post ⑩ backward×5</strong></td>
+        <td><code>train_epoch</code> mini_epochs × minibatch</td>
+        <td>minibatch ≤32768 条</td>
+        <td><strong>GPU</strong>：train 模式，RMS 更新 + 反传 + Adam。CPU 只调度 Python for 循环</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="t0-detail">3.1 t = 0 逐步放大（带 CPU/GPU 注释）</h3>
+
+<div class="timeline">
+  <div class="step"><h4>t=0 · 策略前向 [GPU]</h4><p><code>PPO.model_act(self.obs)</code> → RunningMeanStd(obs) → env_mlp(priv) → actor_mlp → 采样 a₀, V₀。PyTorch CUDA kernel 执行矩阵乘；CPU 在等 GPU 完成 Python 调用。</p></div>
+  <div class="step"><h4>t=0 · 写入 buffer [GPU]</h4><p><code>storage.update_data(..., n=0)</code> 把 obs₀、priv₀、a₀、V₀、μ₀、σ₀ 拷进 <code>storage_dict[:, 0, :]</code>。预分配显存，无 malloc。</p></div>
+  <div class="step"><h4>t=0 · Wrapper step [GPU]</h4><p><code>GymStyleEnvWrapper.step(a₀)</code> clamp → <code>env.step</code>。Python 在 CPU 跑，实际计算在 GPU。</p></div>
+  <div class="step"><h4>t=0 · PhysX 物理 [GPU 瓶颈]</h4><p><code>xhand_wave_env</code>：动作→目标角→PD 力矩→PhysX 子步（sim.dt×decimation）→接触→奖励→更新 proprio_hist / priv_info。N 越大 GPU 越满。</p></div>
+  <div class="step"><h4>t=0 · 奖励入账 [GPU]</h4><p>r̃₀ = 0.01·r₀ + γV₀·timeout₀ → <code>storage.rewards[0]</code>；<code>dones[0]</code> 记录。episode 统计用原始 r，GAE 用 r̃。</p></div>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">t=0 完整调用栈 · 逐行 + 设备</div>
+  <table>
+    <thead><tr><th>代码 / 调用</th><th>白话 + CPU/GPU</th></tr></thead>
+    <tbody>
+      <tr><td><code>res_dict = model_act(self.obs)</code></td><td>GPU 前向。输入 obs (N,186)、priv (N,8)。输出 actions (N,21)、values (N,1)。</td></tr>
+      <tr><td><code>storage.update_data('obses', 0, ...)</code></td><td>GPU 写入。存 step <strong>前</strong>的 s₀，不是 step 后的 s₁。</td></tr>
+      <tr><td><code>clamp(actions); env.step(...)</code></td><td>GPU。Wrapper + PhysX。返回新 obs_dict → 覆盖 self.obs 为 s₁。</td></tr>
+      <tr><td><code>shaped_rewards = 0.01*r + ...</code></td><td>GPU 元素运算。timeout 来自 Wrapper extras['time_outs']。</td></tr>
+      <tr><td><code>episode_rewards.update(...)</code></td><td>GPU 索引 done env + CPU 侧 meter 滑动平均（标量 .item()）。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="t1-7">3.2 t = 1 … 7：重复与差异</h3>
+<div class="intuition">
+t=1…7 与 t=0 <strong>代码路径完全相同</strong>，差异只有两点：① buffer 行号 n=1…7；② <code>self.obs</code> 已是上一步 PhysX 输出。GPU 时间线每步重复「前向 ~1ms 级 + PhysX ~数十ms 级（视 N 而定）」。8 步串行，无法并行——必须等 t=0 的 PhysX 完成才能用 s₁ 做 t=1 的 model_act。
+</div>
+
+<h3 id="post">3.3 post：8 步之后的 GPU 工作</h3>
+
+<div class="walk-table">
+  <div class="walktitle">play_steps 收尾 · 逐行 + 设备</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话 + CPU/GPU</th></tr></thead>
+    <tbody>
+      <tr><td><code>model_act(self.obs)</code></td><td>GPU。对 s₈（第 8 步后的状态）估 V₈，作 GAE 的 bootstrap 终端价值。</td></tr>
+      <tr><td><code>agent_steps += batch_size</code></td><td>CPU 整数加法。+8×N。</td></tr>
+      <tr><td><code>computer_return(...)</code></td><td>GPU。8 次逆序迭代，纯张量，相对 PhysX 可忽略。</td></tr>
+      <tr><td><code>prepare_training()</code></td><td>GPU。展平 + advantage 标准化。</td></tr>
+      <tr><td><code>value_mean_std train/eval</code></td><td>GPU。可选 normalize returns/values。</td></tr>
+      <tr><td><code>mini_epochs 循环 backward</code></td><td>GPU 密集。CPU 负责 Python 双层 for 调度 minibatch 索引。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>问：num_envs=10 和 16384 时 GPU 在干什么差别？</b> 小 N：PhysX 欠饱和，GPU 大量空闲，EnvStepFPS 低。大 N：GPU 物理管线打满，采样 FPS 高，但显存占用线性增。RTX 5070 Ti 12GB 建议从 N=10 调试，再逐步加大。
+</div>
+
+<h2 id="detail">四、逐步放大：t = 0 的调用栈（代码级）</h2>
+
+<h3 id="reset">4.0 Epoch 开始前（仅首次或 env done 后）</h3>
+<span class="code-cap">调用链 · reset</span>
+<pre><code class="lang-py">PPO.train() 首次: self.obs = self.env.reset()
+  └─ GymStyleEnvWrapper.reset()
+       └─ IsaacLab env.reset()
+            └─ xhand_wave_env._reset_idx(): 抓取缓存起手、写 joint state、清零 hist
+       └─ obs_dict['obs'] = obs_dict['policy']   # (N, 186)
+  返回 dict: { 'obs', 'priv_info', 'proprio_hist', 'policy', ... }</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">reset 链 · CPU/GPU</div>
+  <table>
+    <thead><tr><th>步骤</th><th>设备</th></tr></thead>
+    <tbody>
+      <tr><td>从 grasp cache .npy 采样关节角</td><td>GPU：索引 + scatter 写入 articulation state</td></tr>
+      <tr><td>PhysX 稳定化若干子步</td><td>GPU</td></tr>
+      <tr><td>compute_observations 首帧</td><td>GPU：写 obs_buf、priv_info_buf、proprio_hist</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="act">4.1 策略 act（t=0）</h3>
+<span class="code-cap">PPO.model_act → ActorCritic.act</span>
+<pre><code class="lang-py">processed = running_mean_std(obs)              # (N, 186)
+extrin = tanh(env_mlp(priv_info))              # (N, 8)
+x = actor_mlp(cat(obs, extrin))                # (N, 128)
+mu = mu_head(x)                                # (N, 21)
+a ~ Normal(mu, sigma);  V = value_head(x)      # (N, 1)
+values = value_mean_std(V, unnorm=True)        # 反归一化后存 buffer</code></pre>
+
+<h3 id="wrapper-step">4.2 Wrapper step（t=0）</h3>
+<span class="code-cap">GymStyleEnvWrapper.step</span>
+<pre><code class="lang-py">actions = clamp(a0, -clip, clip)
+obs_dict, rew, terminated, truncated, extras = env.step(actions)
+dones = (terminated | truncated).long()
+obs_dict['obs'] = obs_dict['policy']
+extras['time_outs'] = truncated              # 无限 horizon 任务
+return obs_dict, rew, dones, extras</code></pre>
+
+<h3 id="physics">4.3 环境物理一步（t=0）</h3>
+<ol>
+  <li>动作 → 目标关节角（scale + default pose）<strong>[GPU]</strong></li>
+  <li>PhysX 子步积分（sim.dt × decimation）<strong>[GPU 主耗时]</strong></li>
+  <li><code>compute_observations()</code>：62 维单帧 × 3 帧 lag → 186 维 <strong>[GPU]</strong></li>
+  <li><code>compute_rewards()</code>：旋转进度 + 速度/能量/接触等 <strong>[GPU]</strong></li>
+  <li>更新 <code>proprio_hist_buf</code>（30×62）、<code>priv_info_buf</code>（8 维）<strong>[GPU]</strong></li>
+</ol>
+
+<h3 id="buffer-write">4.4 Buffer 写入（t=0）</h3>
+<pre><code class="lang-py">storage_dict['obses'][0]       = obs_before_step   # step 前观测 s₀
+storage_dict['rewards'][0]     = 0.01*r + gamma*V*timeout
+storage_dict['dones'][0]       = done</code></pre>
+
+<h3 id="gae-detail">4.5 GAE（8 步后一次）[GPU]</h3>
+<p>对 N 个 env 并行，每个 env 一条长度 8 的轨迹，逆序算 $\hat A_t$（见<a href="04-gae.html">第 04 章</a>与<a href="20-ppo-training-loop.html#gae-code">第 20 章</a>）。</p>
+
+<h3 id="backward">4.6 反向传播（minibatch 0 示意）[GPU]</h3>
+<span class="code-cap">train_epoch · 第一个 minibatch</span>
+<pre><code class="lang-py">obs, priv, ... = storage[0]                    # 取 ≤32768 条
+obs = running_mean_std(obs)                    # train 模式，更新统计
+out = model({obs, priv, prev_actions=actions})
+loss = PPO_clip_loss + 0.5*critic_coef*c_loss + bounds ...
+loss.backward()
+clip_grad_norm_(model.parameters(), 1.0)
+optimizer.step()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">backward 段 · CPU/GPU 分工</div>
+  <table>
+    <thead><tr><th>步骤</th><th>设备</th></tr></thead>
+    <tbody>
+      <tr><td><code>storage[i]</code> 切片</td><td>GPU：返回显存视图，不拷贝</td></tr>
+      <tr><td><code>running_mean_std(obs)</code> train</td><td>GPU：更新 running 统计 + 归一化</td></tr>
+      <tr><td><code>model(batch_dict)</code> forward</td><td>GPU：算新 neglogp、values、entropy</td></tr>
+      <tr><td><code>loss.backward()</code></td><td>GPU：autograd 反传</td></tr>
+      <tr><td><code>optimizer.step()</code></td><td>GPU：Adam 更新权重</td></tr>
+      <tr><td><code>policy_kl → scheduler</code></td><td>CPU：KL .item() 决定是否调 lr</td></tr>
+      <tr><td><code>write_stats / save</code></td><td>CPU：TensorBoard 写盘；GPU→CPU 拷贝 state_dict 存 .pth</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="vs-deploy">五、训练循环 vs 部署循环</h2>
+<table>
+  <thead><tr><th>步骤</th><th>训练 · PPO（Stage 1）</th><th>部署 · deploy_xhand（Stage 2 学生）</th></tr></thead>
+  <tbody>
+    <tr><td><b>入口</b></td><td><code>train.py</code> → <code>PPO.train()</code></td><td><code>deploy_xhand.py</code> → <code>while True</code></td></tr>
+    <tr><td><b>并行度</b></td><td>N 个 Isaac 仿真 env [GPU]</td><td>1 只真手 [CPU 读 SDK + GPU 推理可选]</td></tr>
+    <tr><td><b>观测来源</b></td><td>仿真 PhysX + 特权 priv_info</td><td>SDK 关节角 + 触觉 + 历史 buffer</td></tr>
+    <tr><td><b>策略输入</b></td><td>obs + priv_info → env_mlp → z</td><td>obs + proprio_hist → TConv → ẑ</td></tr>
+    <tr><td><b>推理 API</b></td><td><code>model.act()</code> 采样（带探索）</td><td><code>act_inference()</code> 只要 μ</td></tr>
+    <tr><td><b>动作执行</b></td><td>Wrapper → 仿真 PD [GPU]</td><td><code>deploy_env.step</code> → hw_interface SDK [CPU+硬件]</td></tr>
+    <tr><td><b>奖励</b></td><td>有，×0.01 进 buffer</td><td>无（开环控制）</td></tr>
+    <tr><td><b>GAE / backward</b></td><td>每 8 步一次 [GPU]</td><td>无</td></tr>
+    <tr><td><b>时间约束</b></td><td>可 headless 跑满 GPU</td><td>严格 20Hz（50ms/步），CPU sleep</td></tr>
+  </tbody>
+</table>
+
+<div class="intuition">
+部署循环是训练循环的<strong>子集</strong>：保留「观测 → 归一化 → 网络 → clamp → 执行」，去掉「采样噪声、奖励、GAE、优化器」。PhysX 换成真手 SDK，GPU 只跑推理几毫秒，其余时间 CPU 在等 20Hz 节拍。
+</div>
+
+<span class="code-cap">并排对比 · 核心循环</span>
+<pre><code class="lang-py"># 训练 PPO.play_steps (简化)
+for n in range(8):
+    out = model_act(obs)           # GPU 前向 + 采样
+    obs, r, done, info = env.step(clamp(out.actions))  # GPU PhysX
+    buffer.store(..., 0.01*r, ...)
+storage.gae(); optimizer.step()  # GPU
+
+# 部署 deploy_xhand.py
+while True:
+    a   = runner.act(obs)          # GPU/CPU 推理，无探索
+    obs = env.step(a)              # SDK + sleep 50ms</code></pre>
+
+<h2 id="params">六、改一个参数，连锁反应</h2>
+<div class="symtable">
+  <div class="symtitle">常见参数改动的影响链</div>
+  <table>
+    <thead><tr><th>你改了…</th><th>直接影响</th><th>GPU/CPU 影响</th><th>还要改…</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">--num_envs ↓</td><td>batch_size=8×N 变小</td><td>GPU PhysX 欠饱和，FPS↓</td><td>调试可接受；正式训练尽量大</td></tr>
+      <tr><td class="sym-col">horizon_length</td><td>每次更新前看得更远/更近</td><td>采集时间线性增</td><td>同步改 train.py minibatch cap</td></tr>
+      <tr><td class="sym-col">minibatch_size</td><td>每次 backward 样本数</td><td>越大 GPU 利用率越高，显存↑</td><td>须整除 batch_size</td></tr>
+      <tr><td class="sym-col">去掉 reward×0.01</td><td>returns 量级变大</td><td>Critic backward 梯度爆炸风险</td><td>不建议</td></tr>
+      <tr><td class="sym-col">observation_space 维数</td><td>网络 input 变</td><td>显存线性增</td><td>重训；TConv frame_shape=obs//3</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="checklist">七、20 条过关 Checklist</h2>
+<ol>
+  <li>说出 <code>rl_isaaclab/</code> 下 scripts、tasks、algo、wrapper、deploy_xhand 各干什么（<a href="13-project-map.html">13</a>）</li>
+  <li>解释 <code>import rl_isaaclab.tasks.inhand_rotate</code> 为何不调用函数却必需（gym.register）</li>
+  <li>追踪 <code>train.py</code> 里 <code>num_envs</code> 如何写进 <code>agent_cfg['algorithm']['num_actors']</code></li>
+  <li>说出 Xhand 动作 21 维、观测 186 维、单帧 62 维的构成（<a href="17-obs-reward-code.html">17</a>）</li>
+  <li>解释 grasp cache <code>.npy</code> 在 reset 时如何被采样（<a href="18-grasp-cache.html">18</a>）</li>
+  <li>描述 <code>GymStyleEnvWrapper.step</code> 返回的四元组及 <code>time_outs</code> 来源（<a href="19-wrapper-layer.html">19</a>）</li>
+  <li>写出 <code>batch_size = horizon_length × num_actors</code> 并代入 8×16384</li>
+  <li>解释 <code>play_steps</code> 里为何 <code>shaped_rewards = 0.01 * rewards</code>（<a href="20-ppo-training-loop.html">20</a>）</li>
+  <li>写出 GAE 的 δ 与 $\hat A_t$ 递推式，并对应 <code>computer_return</code> 三行核心代码</li>
+  <li>解释 play_steps 中 t=0 时 GPU 主要在 PhysX 还是 PyTorch 前向</li>
+  <li>说出 ExperienceBuffer <code>transform_op</code> 把 (8,N,d) 变成什么 shape</li>
+  <li>描述 <code>model_act</code> 与 <code>model.forward</code> 在探索上的区别</li>
+  <li>画出 Stage1 数据流：priv_info → env_mlp → z → actor_mlp</li>
+  <li>说出 ProprioAdaptTConv 输入 (N,30,62) 输出 (N,8)</li>
+  <li>解释 Stage 2「只练小抄模块」在代码里对应哪几个参数名</li>
+  <li>列出 stage1_nn 与 stage2_nn checkpoint 各含哪些 key</li>
+  <li>对比部署 <code>PolicyRunner.act</code> 与训练 <code>model_act</code> 的输入字典差异</li>
+  <li>解释 Stage2 为何必须 <code>load_path</code> 指向 stage1 且 <code>gravity=-9.81</code></li>
+  <li>说出 backward 阶段 CPU 与 GPU 各自负责什么</li>
+  <li>不看代码，口述从 <code>python train.py --task ... --headless</code> 到 <code>stage1_nn/best.pth</code> 的全路径</li>
+</ol>
+
+<h2 id="mermaid">八、一图串全流程（Stage 1）</h2>
+<pre><code>train.py [CPU 启动]
+  ├─ gym.make(Xhand task) [GPU env]
+  ├─ GymStyleEnvWrapper
+  └─ PPO.train()
+       └─ train_epoch()  × 直到 max_agent_steps
+            ├─ play_steps()  [t=0..7, GPU]
+            │    ├─ model_act: RMS(obs) → ActorCritic.act
+            │    ├─ ExperienceBuffer.update_data
+            │    ├─ wrapper.step → xhand_wave_env (PhysX) ← 瓶颈
+            │    └─ reward×0.01 + bootstrap
+            ├─ computer_return (GAE) [GPU, 快]
+            ├─ prepare_training (flatten + adv norm)
+            └─ mini_epochs × minibatch: loss.backward [GPU]
+                 └─ save best.pth [CPU 写盘]</code></pre>
+
+<h2 id="t-table">九、t=0…7 逐步 CPU/GPU 明细表</h2>
+
+<div class="symtable">
+  <div class="symtitle">每个 t 的四阶段（重复 8 次）</div>
+  <table>
+    <thead><tr><th>子步</th><th>函数</th><th>耗时占比（典型 N=4096+）</th><th>设备</th></tr></thead>
+    <tbody>
+      <tr><td>A</td><td>model_act</td><td>~5%</td><td>GPU PyTorch</td></tr>
+      <tr><td>B</td><td>update_data ×6</td><td>&lt;1%</td><td>GPU memcpy</td></tr>
+      <tr><td>C</td><td>env.step → PhysX</td><td>~85%</td><td>GPU PhysX</td></tr>
+      <tr><td>D</td><td>shaped_reward + stats</td><td>~2%</td><td>GPU + 少量 CPU</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>下表按时间步展开（post 阶段在 t=7 之后执行一次）：</p>
+
+<div class="walk-table">
+  <div class="walktitle">t=0 … t=7 · 每步 CPU/GPU 快照</div>
+  <table>
+    <thead><tr><th>t</th><th>self.obs 是什么</th><th>GPU 主负载</th><th>CPU 在干什么</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>s₀（epoch 起点或 reset 后）</td><td>Actor 前向 + PhysX(s₀→s₁)</td><td>Python for 循环调度；几乎不等 I/O</td></tr>
+      <tr><td>1</td><td>s₁</td><td>Actor 前向 + PhysX(s₁→s₂)</td><td>同上</td></tr>
+      <tr><td>2</td><td>s₂</td><td>同上</td><td>同上</td></tr>
+      <tr><td>3</td><td>s₃</td><td>同上</td><td>同上</td></tr>
+      <tr><td>4</td><td>s₄</td><td>同上</td><td>若 env done，CPU 更新 episode meter</td></tr>
+      <tr><td>5</td><td>s₅</td><td>同上</td><td>同上</td></tr>
+      <tr><td>6</td><td>s₆</td><td>同上</td><td>同上</td></tr>
+      <tr><td>7</td><td>s₇</td><td>Actor 前向 + PhysX(s₇→s₈)</td><td>同上；buffer 8 行满</td></tr>
+      <tr><td>post</td><td>s₈</td><td>model_act 估 V₈ + GAE + 5×backward</td><td>调度 minibatch；KL→调 lr；写 TB</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+<strong>关键结论：</strong> 每个 t 的 GPU 时间 ≈ T_forward + T_physx，其中 T_physx ≫ T_forward。CPU 不是瓶颈——它只跑 Python 解释器把调用串起来。若 profiling 显示 CPU 100%、GPU 30%，通常是 N 太小或 Isaac Sim 在等 CPU 提交命令，应加大 num_envs。
+</div>
+
+<h2 id="train-py-capstone">十、train.py 入口在 Capstone 中的位置</h2>
+<span class="code-cap">scripts/train.py · 关键行</span>
+<pre><code class="lang-py">env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions)
+agent = eval(agent_cfg["algo"])(env, output_dir=log_dir, full_config=config)
+agent_cfg["algorithm"]['minibatch_size'] = min([args_cli.num_envs * 8, 32768])
+agent.restore_train(resume_path)   # ProprioAdapt 或 --resume
+agent.train()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">train.py · Capstone 视角逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话 + 设备</th></tr></thead>
+    <tbody>
+      <tr><td><code>AppLauncher</code></td><td>CPU：启动 Omniverse / Isaac Sim 进程</td></tr>
+      <tr><td><code>num_envs → num_actors</code></td><td>CPU：写配置；决定 GPU 并行 PhysX 数量</td></tr>
+      <tr><td><code>min(..., 32768)</code></td><td>CPU：cap minibatch，防 12GB 显存 OOM</td></tr>
+      <tr><td><code>agent.train()</code></td><td>进入 PPO 主循环，此后 GPU 为主</td></tr>
+      <tr><td><code>env.close()</code></td><td>CPU：释放 Sim 资源</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="done-reset">十三、env done 后谁 reset？</h2>
+<div class="intuition">
+某个并行 env 在 t=3 时 done=1，<strong>不是 Wrapper reset</strong>，而是 IsaacLab 环境内部 <code>_reset_idx(done_ids)</code> 在<strong>同一</strong> <code>env.step</code> 调用里立刻重置该 env，并返回 reset 后的 obs。PPO 侧只看到 <code>self.obs</code> 已更新为新 episode 首帧；play_steps 不中断，继续 t=4…7。
+</div>
+
+<div class="ask-box">
+  <b>问：8 步内 done 的 env GAE 怎么处理？</b> <code>next_nonterminal = 1 - dones</code> 在 done 步截断未来 bootstrap。该 env 的 trajectory 在 done 步「封口」，不影响同 batch 其他 env。
+</div>
+
+<h2 id="profile">十四、如何 profile 验证 GPU 瓶颈</h2>
+<p>训练时在终端看 PPO 打印的 <code>Collect Time</code> vs <code>Train RL Time</code>：通常 Collect ≫ Train RL，说明 GPU 主要在 PhysX 而非 backward。TensorBoard 的 <code>performance/EnvStepFPS</code> 随 num_envs 增大应明显上升，直到显存打满。</p>
+
+<div class="ask-box">
+  <b>问：play_steps 和 deploy 循环能共用 profiling 吗？</b> 不能简单共用：deploy 无 PhysX、无 backward，GPU 几乎只在 act_inference。训练 capstone 的 t=0…7 时间线专指 Stage 1 PPO play_steps。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">Part B 章节 ↔ 本 capstone 时间线</div>
+  <table>
+    <thead><tr><th>章节</th><th>对应 timeline 阶段</th></tr></thead>
+    <tbody>
+      <tr><td><a href="19-wrapper-layer.html">19 Wrapper</a></td><td>每步 env.step 的翻译层</td></tr>
+      <tr><td><a href="20-ppo-training-loop.html">20 PPO</a></td><td>play_steps + train_epoch 全貌</td></tr>
+      <tr><td><a href="21-networks-padapt.html">21 网络</a></td><td>model_act 内部 ActorCritic</td></tr>
+      <tr><td>16–17 环境</td><td>PhysX 一步内部</td></tr>
+      <tr><td><a href="12-deploy-walkthrough.html">12 部署</a></td><td>去掉 GAE/backward 的子集</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="mem">十二、显存与 batch 心算</h2>
+<div class="symtable">
+  <div class="symtitle">ExperienceBuffer 显存粗算（float32）</div>
+  <table>
+    <thead><tr><th>字段</th><th>shape</th><th>bytes（N=16384）</th></tr></thead>
+    <tbody>
+      <tr><td>obses</td><td>(8, N, 186)</td><td>8×16384×186×4 ≈ 98 MB</td></tr>
+      <tr><td>actions/mus/sigmas</td><td>(8, N, 21) ×3</td><td>≈ 33 MB</td></tr>
+      <tr><td>其余字段</td><td>values, rewards, dones…</td><td>&lt;20 MB</td></tr>
+      <tr><td><strong>buffer 小计</strong></td><td>—</td><td>~150 MB（相对 PhysX 很小）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+显存大头在 <strong>N 个 PhysX 场景</strong> 与 <strong>网络权重</strong>，不在 ExperienceBuffer。这也是 horizon=8 而非 800 的原因之一——buffer 与 horizon 线性相关，但物理场景数 N 才是显存杀手。
+</div>
+
+<h2 id="faq">十一、FAQ</h2>
+
+<div class="ask-box">
+  <b>问：8 步能并行跑吗？</b> 不能。t=1 的 model_act 依赖 t=0 PhysX 输出的 s₁，必须串行。能并行的是 N 个 env——它们在 GPU 上 batch 一起算。
+</div>
+
+<div class="ask-box">
+  <b>问：headless 训练 GPU 利用率低正常吗？</b> 若 N 很小（如 10），PhysX batch 太小，GPU 会空转。加大 num_envs 直到显存接近上限，EnvStepFPS 会显著上升。
+</div>
+
+<h2 id="next">十、读完 Part B 之后</h2>
+<table>
+  <thead><tr><th>目标</th><th>建议动作</th></tr></thead>
+  <tbody>
+    <tr><td>跑通训练</td><td><code>gen_grasp</code> → <code>train --num_envs 10 --headless</code></td></tr>
+    <tr><td>看策略</td><td><code>play.py --load_path stage1_nn/best.pth</code></td></tr>
+    <tr><td>蒸馏学生</td><td><code>train --algorithm ProprioAdapt --load_path .../stage1_nn/best.pth</code></td></tr>
+    <tr><td>上真机</td><td>读<a href="12-deploy-walkthrough.html">第 12 章</a>，<code>deploy_xhand --dry_run</code> 先跑假手</td></tr>
+  </tbody>
+</table>
+
+<details class="tryit">
+  <summary>15 分钟实操验证</summary>
+  <div class="tryit-body">
+    <pre><code>conda activate env_isaaclab
+cd /media/user/Data/Robotera/era_dexhand_lab
+python -c "
+from rl_isaaclab.algo.ppo.ppo import PPO
+from rl_isaaclab.algo.ppo.experience import ExperienceBuffer
+import inspect
+print('play_steps lines', len(inspect.getsourcelines(PPO.play_steps)[0]))
+print('GAE fn', ExperienceBuffer.computer_return.__name__)
+"</code></pre>
+    <p>再在浏览器打开本章与第 20 章并排，对照 timeline 读一遍 <code>ppo.py</code>。</p>
+  </div>
+</details>
+
+<div class="tip">
+<b>Part B 收官。</b> 13–22 章把「命令 → 配置 → 环境 → wrapper → PPO → 网络 → 全链路」串起来了。记住 play_steps 里 t=0…7 每步都是 <strong>GPU 前向 → GPU PhysX → 写 buffer</strong>；8 步结束后 <strong>GPU GAE + backward</strong>。部署时去掉 PhysX 和 backward，只留推理 + 真手 SDK。</div>
+
+<div class="pager">
+  <a href="21-networks-padapt.html"><div class="dir">← 上一章</div><div class="ttl">21 · 网络与 ProprioAdapt</div></a>
+  <a class="next" href="index.html"><div class="dir">下一章 →</div><div class="ttl">首页 · 课程索引</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 22 章 · Capstone</footer>
+</body>
+</html>

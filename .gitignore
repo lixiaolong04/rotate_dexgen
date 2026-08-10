@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.egg-info/
+**/logs/**
+!dexgen/logs/
+!dexgen/logs/README.md
+!manus_dexgen_bridge/logs/
+!manus_dexgen_bridge/logs/manus_auto_mode_profile.pt
+!manus_dexgen_bridge/logs/manus_open_profile.pt
+python/
+ckpts_cloud/
+.pytest_cache/
+build/
+outputs/
+.xbot_test_overlay/

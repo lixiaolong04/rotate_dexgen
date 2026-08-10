@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>13 · 项目地图与 Python 补课</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 13 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 13 · Part B 起点</div>
+  <h1>项目地图与 Python 补课</h1>
+  <p class="sub">读完本章，你能回答：仓库里每个文件夹干什么？一条 <code>train.py</code> 命令会碰哪些文件？只有一点 Python 基础需要提前知道什么？</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>Part A vs Part B。</b> 第 01–09 章讲<strong>原理</strong>（PPO、GAE、RMA…）；第 10–12 章讲<strong>流程与部署</strong>。从本章起的 <strong>13–22</strong> 是<strong>代码导读</strong>——把原理落到具体文件、函数、参数上。两条线可以交叉阅读。</div>
+
+<h2 id="zero">零、读代码之前</h2>
+<p>如果你「完全看不懂」仓库里的 Python，先别慌——本章不要求你立刻能写代码，只要知道<strong>名词对应什么文件夹</strong>、<strong>一条命令会经过谁</strong>。下面 8 个词会在后面章节反复出现，先混个脸熟。</p>
+
+<div class="glossary">
+  <h4>本章术语速查（先背下来，细节后面章节会讲）</h4>
+  <dl>
+    <dt>import（导入）</dt>
+    <dd>像在说「请把另一个文件里的工具拿过来用」。例如 <code>import torch</code> 才能用 PyTorch。<strong>副作用 import</strong> 指：导入时顺便执行注册代码（如 <code>gym.register</code>），你并没显式调用函数。</dd>
+    <dt>模块 / 包（module / package）</dt>
+    <dd>一个 <code>.py</code> 文件是一个模块；一个带 <code>__init__.py</code> 的文件夹是一个包。本项目训练代码主要在包 <code>rl_isaaclab</code> 里。</dd>
+    <dt>class（类）</dt>
+    <dd>一种「蓝图」。例如 <code>XhandWaveInhandRotateEnv</code> 是仿真环境的蓝图；<code>gym.make(...)</code> 会按蓝图造出真正跑仿真的对象（<strong>实例</strong>）。</dd>
+    <dt>cfg / 配置（configuration）</dt>
+    <dd>一堆<strong>可调参数</strong>的集合：episode 多长、重力多大、动作有几维……写在 <code>xhand_wave_env_cfg.py</code> 或 <code>ppo_cfg.yaml</code> 里，而不是散落在代码各处。</dd>
+    <dt>dict（字典）</dt>
+    <dd>Python 的键值对容器，写法 <code>{"gamma": 0.99}</code>。YAML 读进来通常是 dict；用方括号取键：<code>agent_cfg["seed"]</code>。</dd>
+    <dt>tensor（张量）</dt>
+    <dd>PyTorch 里的多维数组，常在 GPU 上。形状 <code>(10, 21)</code> 可理解为：10 个并行环境，每个 21 个数（动作）。</dd>
+    <dt>gym / Gymnasium</dt>
+    <dd>强化学习界的「标准插座」：<code>reset()</code> 开局、<code>step(action)</code> 走一步。任务名如 <code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code> 要先 <code>register</code> 登记，<code>gym.make</code> 才能创建。</dd>
+    <dt>CLI（命令行参数）</dt>
+    <dd>你在终端里跟在命令后面的 <code>--num_envs 10</code>、<code>--headless</code> 等。它们会<strong>覆盖</strong>配置文件里的默认值。</dd>
+  </dl>
+</div>
+
+<div class="intuition">
+把读代码想成<strong>逛商场</strong>：你不需要第一天就学会装修（写环境类），只要知道「生鲜区在哪、收银台在哪、会员卡（配置）怎么用」。本章就是商场导览图；第 14 章带你走一次收银全流程（<code>train.py</code>）。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>我连 Python 基础都没有，能跟这门课吗？<br>
+  可以。Part B（13–22 章）按「先认路 → 再跟脚本 → 再拆配置」设计。遇到不懂的 Python 语法，先记下<strong>这行在整条流水线里干什么</strong>，语法可以边用边补。建议同时开一个<a href="https://docs.python.org/zh-cn/3/tutorial/" target="_blank" rel="noopener">Python 官方教程</a>当字典。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>era_dexhand_lab</code> 和 <code>rl_isaaclab</code> 是什么关系？<br>
+  <code>era_dexhand_lab</code> 是整个<strong>项目文件夹</strong>（含资产、文档、缓存）。<code>rl_isaaclab</code> 是其中的<strong>Python 代码包</strong>，<code>pip install -e .</code> 之后可在任意目录 <code>import rl_isaaclab</code>。
+</div>
+
+<h2 id="tree">一、仓库目录树</h2>
+<div class="intuition">
+把整个项目想成一家「教机械手转笔」的工厂：<strong>仿真车间</strong>（Isaac Sim）里成千上万只虚拟手同时练习；<strong>算法办公室</strong>（PPO）记录谁转得好并改策略；练成的「大脑」存成 <code>.pth</code>；最后<strong>真机装配线</strong>（deploy_xhand）把大脑接到真实 Xhand 手上。
+</div>
+
+<pre><code>era_dexhand_lab/
+├── rl_isaaclab/              # 训练与部署核心代码
+│   ├── scripts/              # 入口：train.py, gen_grasp.py, play.py
+│   ├── tasks/inhand_rotate/  # 环境类 + 配置 + gym 注册
+│   ├── algo/                 # PPO、ProprioAdapt、神经网络
+│   ├── wrapper/              # 环境 ↔ 算法的适配层
+│   └── deploy_xhand/         # 真机部署（无 Isaac Sim）
+├── assets/xhand_green/       # Xhand URDF/USD 资产
+├── assets/cylinder/          # 训练用圆柱体 USD
+├── cache/                    # 抓取缓存 .npy、关节 meta JSON
+├── logs/                     # TensorBoard + checkpoint
+├── tests/                    # 单元测试（cfg 一致性、deploy obs）
+├── docs/rl_course/           # 本课程 HTML
+└── xhandSDK/                 # 真机 Python/C++ SDK 文档</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">目录树 · 每一行在说什么（零基础版）</div>
+  <table>
+    <thead><tr><th>路径片段</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/</code></td><td>你平时在终端敲的 <code>train.py</code>、<code>play.py</code> 在这。相当于「开始按钮」。</td></tr>
+      <tr><td><code>tasks/inhand_rotate/</code></td><td>仿真「游戏规则」：手怎么动、奖励怎么算、任务怎么注册到 gym。</td></tr>
+      <tr><td><code>algo/</code></td><td>PPO 大脑：收集经验、算 loss、更新神经网络权重。</td></tr>
+      <tr><td><code>wrapper/</code></td><td>翻译官：把 IsaacLab 环境接口改成 PPO 习惯的格式。</td></tr>
+      <tr><td><code>assets/</code></td><td>3D 模型文件（手的 USD、圆柱体），不是 Python 代码。</td></tr>
+      <tr><td><code>cache/</code></td><td>预生成的「起手抓握姿势」数据，训练 reset 时会读。</td></tr>
+      <tr><td><code>logs/</code></td><td>训练产物：<code>.pth</code> 权重、TensorBoard、配置快照。</td></tr>
+      <tr><td><code>deploy_xhand/</code></td><td>真机部署，<strong>不</strong>需要 Isaac Sim，用 Xhand SDK 控制实体手。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+<code>assets/</code> 像乐高零件，<code>tasks/</code> 像说明书，<code>algo/</code> 像教练，<code>scripts/</code> 像遥控器。零件本身不会动，要遥控器启动仿真 + 教练下发动作，手才会在虚拟世界里转笔。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">关键目录职责</div>
+  <table>
+    <thead><tr><th>路径</th><th>职责</th><th>对应章节</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>scripts/</code></td><td>你日常敲的命令从这里进</td><td><a href="14-entry-scripts.html">14</a></td></tr>
+      <tr><td class="sym-col"><code>tasks/inhand_rotate/</code></td><td>仿真环境、奖励、观测、配置</td><td><a href="15-config-system.html">15</a>–<a href="17-obs-reward-code.html">17</a></td></tr>
+      <tr><td class="sym-col"><code>algo/</code></td><td>PPO 训练循环、ActorCritic、蒸馏</td><td><a href="20-ppo-training-loop.html">20</a>–<a href="21-networks-padapt.html">21</a></td></tr>
+      <tr><td class="sym-col"><code>wrapper/</code></td><td>把 IsaacLab env 包装成 PPO 能用的接口</td><td><a href="19-wrapper-layer.html">19</a></td></tr>
+      <tr><td class="sym-col"><code>deploy_xhand/</code></td><td>真机 20Hz 控制循环</td><td><a href="12-deploy-walkthrough.html">12</a></td></tr>
+      <tr><td class="sym-col"><code>cache/</code></td><td>抓取起手式、关节顺序 meta</td><td><a href="18-grasp-cache.html">18</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="install">二、pip install -e . 之后发生了什么</h2>
+<p>在项目根目录执行 <code>pip install -e .</code> 后，Python 可以 <code>import rl_isaaclab</code>。包名在 <code>pyproject.toml</code> 里是 <code>sharpawave-rl-lab</code>，但 import 路径是 <code>rl_isaaclab.*</code>。</p>
+
+<div class="intuition">
+<code>pip install -e .</code> 里的 <code>-e</code> 表示「可编辑安装」：你改仓库里的代码，不用重新 pip，下次运行立刻生效。就像把书架的书登记到你名下，但书仍放在原项目文件夹里。
+</div>
+
+<p>训练脚本里有一行关键 import：</p>
+<span class="code-cap">train.py · 副作用 import</span>
+<pre><code class="lang-py">import rl_isaaclab.tasks.inhand_rotate  # 触发 gym.register(...)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">副作用 import · 逐词解释</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>import rl_isaaclab.tasks.inhand_rotate</code></td><td>加载 <code>tasks/inhand_rotate/__init__.py</code> 这个文件，并执行文件里<strong>顶层</strong>的所有语句。</td></tr>
+      <tr><td>（文件内）<code>gym.register(id=..., ...)</code></td><td>向 Gymnasium 登记：任务名叫啥、对应哪个环境类、配置从哪读。</td></tr>
+      <tr><td>之后 <code>gym.make("Isaac-Inhand-Rotate-Xhand-Wave-v0")</code></td><td>查登记表，找到 <code>XhandWaveInhandRotateEnv</code> 并创建仿真实例。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>这行<strong>不调用任何函数</strong>，但会执行 <code>tasks/inhand_rotate/__init__.py</code>，把 <code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code> 等任务注册到 Gymnasium。之后 <code>gym.make("Isaac-Inhand-Rotate-Xhand-Wave-v0")</code> 才知道该实例化哪个类。</p>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么不把 <code>gym.register</code> 写在 <code>train.py</code> 里？<br>
+  可以，但集中写在 <code>__init__.py</code> 更省事：只要 <code>import</code> 一次任务包，所有变体（训练 / 抓取 / Sharpa）都登记好。任何脚本（train / play / gen_grasp）import 同一行即可。
+</div>
+
+<h2 id="python">三、零基础 Python 补课（最小集）</h2>
+<p>下面四块是读 Part B 的<strong>最低 Python 门槛</strong>。每块后面都有 walk-table；看不懂某一行时，先对照表格里的白话，再回来看代码。</p>
+
+<h3 id="dict-cfg">1. dict 与 @configclass</h3>
+<p>算法配置是 YAML 读进来的 <strong>dict</strong>，例如 <code>agent_cfg["algorithm"]["gamma"]</code>。环境配置是 IsaacLab 的 <strong>@configclass</strong> dataclass，字段用点号访问：<code>env_cfg.action_space</code>。</p>
+
+<div class="walk-table">
+  <div class="walktitle">dict vs configclass · 两种取配置的方式</div>
+  <table>
+    <thead><tr><th>写法示例</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>agent_cfg["seed"]</code></td><td>从字典里用键 <code>"seed"</code> 取值，像查通讯录：键是名字，值是号码。</td></tr>
+      <tr><td><code>agent_cfg["algorithm"]["gamma"]</code></td><td>嵌套字典：先找到 <code>algorithm</code> 这一块，再取里面的 <code>gamma</code>（折扣因子）。</td></tr>
+      <tr><td><code>env_cfg.action_space</code></td><td>dataclass 用<strong>点号</strong>访问字段，像对象的属性：<code>env_cfg</code> 的 <code>action_space</code> 是 21。</td></tr>
+      <tr><td><code>env_cfg.scene.num_envs</code></td><td>字段里还可以嵌套别的配置对象，继续用点号往下点。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么算法用 dict、环境用 dataclass，不统一？<br>
+  历史原因：PPO 配置来自 YAML（天然是 dict）；IsaacLab 生态习惯用 <code>@configclass</code> 做类型提示和默认值。训练时 <code>ConfigWrapper</code> 把两者捆在一起交给算法（见第 15 章）。
+</div>
+
+<h3 id="tensor">2. torch.Tensor 与 shape</h3>
+<p>本项目大量用 PyTorch 张量。记法 <code>(num_envs, dim)</code>：第一维是并行环境数（如 10），第二维是特征维（如动作 21）。例如观测 <code>obs.shape == (10, 186)</code>。</p>
+
+<div class="intuition">
+把 <code>(10, 21)</code> 想成<strong>表格</strong>：10 行 = 10 只虚拟手同时练，21 列 = 每只手本步要调的 21 个关节增量。GPU 一次算整张表，所以比「for 循环 10 次」快得多。
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">shape 常见例子</div>
+  <table>
+    <thead><tr><th>shape</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>(10, 21)</code></td><td>10 个环境，每个 21 维动作。</td></tr>
+      <tr><td><code>(10, 186)</code></td><td>10 个环境，每个 186 维观测（关节+触觉+历史等拼在一起）。</td></tr>
+      <tr><td><code>(10,)</code></td><td>10 个标量，常见是 10 个环境的 reward 或 done 标志。</td></tr>
+      <tr><td><code>.device</code></td><td>张量在 CPU 还是 GPU；训练时通常 <code>cuda:0</code>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="gym">3. gym.make 是什么</h3>
+<p>Gymnasium 标准接口：<code>env.reset()</code> 返回初始观测；<code>env.step(action)</code> 返回 <code>obs, reward, done, info</code>。本项目用 IsaacLab 的 <code>DirectRLEnv</code> 实现，再经 <code>GymStyleEnvWrapper</code> 适配 PPO。</p>
+
+<div class="walk-table">
+  <div class="walktitle">gym 环境 · 四个必会方法</div>
+  <table>
+    <thead><tr><th>调用</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>env = gym.make(task_id, cfg=env_cfg)</code></td><td>按任务名造环境；<code>cfg</code> 把配置灌进去（并行数、重力等）。</td></tr>
+      <tr><td><code>obs = env.reset()</code></td><td>新开一局：手复位、物体重新抓起，返回「第一帧传感器读数」。</td></tr>
+      <tr><td><code>obs, r, done, info = env.step(action)</code></td><td>执行一帧动作；返回新观测、奖励、是否结束、额外信息。</td></tr>
+      <tr><td><code>env.close()</code></td><td>释放仿真资源；<code>train.py</code> 结尾会调。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="eval">4. eval(algo) 动态创建类</h3>
+<span class="code-cap">train.py</span>
+<pre><code class="lang-py">agent = eval(agent_cfg["algo"])(env, output_dir=log_dir, full_config=config)
+# algo 字符串 "PPO" → PPO(...) ； "ProprioAdapt" → ProprioAdapt(...)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">eval 一行拆成三步（初学者版）</div>
+  <table>
+    <thead><tr><th>步骤</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>agent_cfg["algo"]</code> 得到 <code>"PPO"</code></td><td>从配置里读出要用哪个算法，是<strong>字符串</strong>不是类本身。</td></tr>
+      <tr><td><code>eval("PPO")</code> → 名字 <code>PPO</code> 对应的类</td><td>把字符串当成 Python 名字解析；所以文件开头必须先 <code>from ... import PPO</code>。</td></tr>
+      <tr><td><code>PPO(env, output_dir=..., full_config=...)</code></td><td>调用类的构造函数，造出真正的训练器对象，赋给变量 <code>agent</code>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><code>eval</code> 把字符串当成 Python 表达式执行。这里 <code>agent_cfg["algo"]</code> 只能是已 import 的类名（<code>PPO</code> 或 <code>ProprioAdapt</code>）。</p>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>eval</code> 很危险吗？<br>
+  在通用编程里，对用户输入用 <code>eval</code> 确实危险。这里字符串只来自你自己的 YAML/CLI（<code>PPO</code> 或 <code>ProprioAdapt</code>），且类已白名单 import，属于项目内约定写法。
+</div>
+
+<h2 id="xhand">四、Xhand vs SharpaWave（本项目对比）</h2>
+<div class="intuition">
+SharpaWave 是项目<strong>原版</strong>灵巧手；Xhand 是我们实际在用的手。代码是「复制一份改名字」的平行结构——学会看 Xhand 文件，就能类推 Sharpa 文件在哪。
+</div>
+<table>
+  <thead><tr><th>项</th><th>SharpaWave（原版）</th><th>Xhand（我们用的）</th></tr></thead>
+  <tbody>
+    <tr><td>action_space</td><td>22</td><td><strong>21</strong></td></tr>
+    <tr><td>observation_space</td><td>192</td><td><strong>186</strong></td></tr>
+    <tr><td>单帧 proprio</td><td>64</td><td><strong>62</strong></td></tr>
+    <tr><td>训练任务 ID</td><td><code>Isaac-Inhand-Rotate-Sharpa-Wave-v0</code></td><td><code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td></tr>
+    <tr><td>部署入口</td><td><code>scripts/deploy.py</code></td><td><code>deploy_xhand/deploy_xhand.py</code></td></tr>
+  </tbody>
+</table>
+<p>代码结构相同：Sharpa 的 <code>sharpa_wave_env.py</code> 与 Xhand 的 <code>xhand_wave_env.py</code> 是平行文件，本章及后续均以 Xhand 为准。</p>
+
+<h2 id="pipeline">五、从命令到 .pth 总览</h2>
+<p>整条流水线可以记成一句话：<strong>先备料（抓取缓存）→ 再训练（PPO）→ 可选蒸馏 → 可视化检查 → 真机部署</strong>。下面时间线对应终端里要敲的命令顺序。</p>
+<div class="timeline">
+  <div class="step"><h4>① gen_grasp.py</h4><p>生成 <code>cache/xhand_grasp_linspace_*.npy</code> 抓取缓存（一次性）</p></div>
+  <div class="step"><h4>② train.py (PPO)</h4><p>Stage 1 教师策略 → <code>logs/.../stage1_nn/best.pth</code></p></div>
+  <div class="step"><h4>③ train.py (ProprioAdapt)</h4><p>Stage 2 学生 → <code>stage2_nn/</code></p></div>
+  <div class="step"><h4>④ play.py</h4><p>GUI 可视化策略</p></div>
+  <div class="step"><h4>⑤ deploy_xhand</h4><p>真机 20Hz 闭环（见<a href="12-deploy-walkthrough.html">第 12 章</a>）</p></div>
+</div>
+<p>端到端命令速查见<a href="10-pipeline-deploy.html">第 10 章</a>；全链路一步拆解见<a href="22-one-step-capstone.html">第 22 章</a>。</p>
+
+<div class="walk-table">
+  <div class="walktitle">五步走 · 每步碰到的主要文件</div>
+  <table>
+    <thead><tr><th>步骤</th><th>命令入口</th><th>主要读/写的文件</th></tr></thead>
+    <tbody>
+      <tr><td>① 抓取缓存</td><td><code>gen_grasp.py</code></td><td>写 <code>cache/xhand_grasp_linspace_*.npy</code>；读 grasp 环境 cfg</td></tr>
+      <tr><td>② PPO 训练</td><td><code>train.py</code></td><td>读 <code>xhand_wave_env_cfg.py</code>、<code>ppo_cfg.yaml</code>；写 <code>logs/.../best.pth</code></td></tr>
+      <tr><td>③ 蒸馏</td><td><code>train.py --algorithm ProprioAdapt</code></td><td>加载 stage1 权重；写 <code>stage2_nn/</code></td></tr>
+      <tr><td>④ 可视化</td><td><code>play.py</code></td><td>加载 checkpoint；关随机化；开 GUI</td></tr>
+      <tr><td>⑤ 真机</td><td><code>deploy_xhand/</code></td><td>无 Isaac Sim；用 SDK + 同套观测逻辑</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>.pth</code> 是什么？<br>
+  PyTorch 保存的<strong>模型权重文件</strong>（神经网络参数 + 有时还有归一化统计）。训练越久，<code>logs/</code> 里会积累 <code>last.pth</code>（最新）和 <code>best.pth</code>（验证最好）等。部署和 play 都要指定 <code>--load_path</code> 指向其中一个。
+</div>
+
+<h2 id="read-order">六、推荐阅读顺序</h2>
+<table>
+  <thead><tr><th>阶段</th><th>章节</th><th>目标</th></tr></thead>
+  <tbody>
+    <tr><td>直觉</td><td>01 → 02</td><td>MDP、观测/奖励含义</td></tr>
+    <tr><td>代码地图</td><td><strong>13 → 14 → 15</strong></td><td>文件在哪、配置怎么合并</td></tr>
+    <tr><td>环境核心</td><td><strong>16 → 17 → 18</strong></td><td>仿真一步发生什么</td></tr>
+    <tr><td>算法</td><td>03–06 + <strong>19 → 20 → 21</strong></td><td>公式对上代码</td></tr>
+    <tr><td>串讲</td><td>10 → <strong>22</strong> → 12</td><td>全链路 + 真机</td></tr>
+  </tbody>
+</table>
+<p class="muted">读完 13–16 即可尝试 <code>gen_grasp</code> + <code>train --num_envs 10</code>，不必等 22 章读完。</p>
+
+<div class="intuition">
+不必线性读完 22 章。若你目标是「先跑通训练」，路线可以是：<strong>13（认路）→ 14（train.py）→ 15（配置）→ 动手跑</strong>；若目标是「懂 PPO 公式」，回到 03–06 章；若目标是「上真机」，10 + 12 章优先。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>我只想看 Xhand，要跳过 Sharpa 相关章节吗？<br>
+  可以。仓库里 Xhand 与 Sharpa 是平行目录；本课程 13 章之后默认以 <code>xhand_wave_*</code> 为准。看到 <code>sharpa_wave_*</code> 文件名时，知道它是「另一只手的同款代码」即可。
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？（无需 Isaac Sim）</summary>
+  <div class="tryit-body">
+    <p>在 <code>era_dexhand_lab</code> 根目录：</p>
+    <pre><code>tree -L 2 rl_isaaclab/
+python -c "import rl_isaaclab.tasks.inhand_rotate; import gymnasium as gym; print(gym.spec('Isaac-Inhand-Rotate-Xhand-Wave-v0'))"</code></pre>
+    <p>第二行应打印出 gym spec，含 <code>entry_point</code> 指向 <code>xhand_wave_env:XhandWaveInhandRotateEnv</code>。</p>
+  </div>
+</details>
+
+<div class="tip">
+<b>本章小结。</b> 项目 = 入口脚本 + 任务环境 + 算法 + wrapper + 资产/cache。Xhand 用 21 维动作、186 维观测。Part B（13–22）按「地图 → 入口 → 配置 → 环境 → 算法 → capstone」顺序读。下一章从 <code>train.py</code> 第一行讲起。</div>
+
+<div class="pager">
+  <a href="12-deploy-walkthrough.html"><div class="dir">← 上一章</div><div class="ttl">12 · 部署逐行精讲</div></a>
+  <a class="next" href="14-entry-scripts.html"><div class="dir">下一章 →</div><div class="ttl">14 · 入口脚本逐行导读</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 13 章 · 项目地图</footer>
+</body>
+</html>

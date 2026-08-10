@@ -1,0 +1,213 @@
+<mujoco model="xhand_left">
+
+  <contact>
+    <exclude body1="left_hand_link" body2="left_hand_thumb_bend_link"/>
+    <exclude body1="left_hand_link" body2="left_hand_thumb_rota_link1"/>
+    <exclude body1="left_hand_link" body2="left_hand_thumb_rota_link2"/>    
+    
+    <exclude body1="left_hand_link" body2="left_hand_index_bend_link"/>
+    <exclude body1="left_hand_link" body2="left_hand_index_rota_link1"/>
+    <exclude body1="left_hand_link" body2="left_hand_mid_link1"/>
+    <exclude body1="left_hand_link" body2="left_hand_ring_link1"/>
+    <exclude body1="left_hand_link" body2="left_hand_pinky_link1"/>
+  </contact>
+  
+  <asset>
+    <mesh name="left_hand_link_visiual" file="../meshes/left_hand_link.STL"/>
+    <mesh name="left_hand_ee_link_visiual" file="../meshes/left_hand_ee_link.STL"/>
+    <mesh name="left_hand_back_link_visiual" file="../meshes/left_hand_back_link.STL"/>
+    <mesh name="left_hand_thumb_bend_link_visiual" file="../meshes/left_hand_thumb_bend_link.STL"/>
+    <mesh name="left_hand_thumb_rota_link1_visiual" file="../meshes/left_hand_thumb_rota_link1.STL"/>
+    <mesh name="left_hand_thumb_rotaback_link1_visiual" file="../meshes/left_hand_thumb_rotaback_link1.STL"/>
+    <mesh name="left_hand_thumb_rota_link2_visiual" file="../meshes/left_hand_thumb_rota_link2.STL"/>
+    <mesh name="left_hand_thumb_rotaback_link2_visiual" file="../meshes/left_hand_thumb_rotaback_link2.STL"/>
+    <mesh name="left_hand_thumb_rota_tip_visiual" file="../meshes/left_hand_thumb_rota_tip.STL"/>
+    <mesh name="left_hand_index_bend_link_visiual" file="../meshes/left_hand_index_bend_link.STL"/>
+    <mesh name="left_hand_index_rota_link1_visiual" file="../meshes/left_hand_index_rota_link1.STL"/>
+    <mesh name="left_hand_index_rotaback_link1_visiual" file="../meshes/left_hand_index_rotaback_link1.STL"/>
+    <mesh name="left_hand_index_rota_link2_visiual" file="../meshes/left_hand_index_rota_link2.STL"/>
+    <mesh name="left_hand_index_rotaback_link2_visiual" file="../meshes/left_hand_index_rotaback_link2.STL"/>
+    <mesh name="left_hand_index_rota_tip_visiual" file="../meshes/left_hand_index_rota_tip.STL"/>
+    <mesh name="left_hand_mid_link1_visiual" file="../meshes/left_hand_mid_link1.STL"/>
+    <mesh name="left_hand_midback_link1_visiual" file="../meshes/left_hand_midback_link1.STL"/>
+    <mesh name="left_hand_mid_link2_visiual" file="../meshes/left_hand_mid_link2.STL"/>
+    <mesh name="left_hand_midback_link2_visiual" file="../meshes/left_hand_midback_link2.STL"/>
+    <mesh name="left_hand_mid_tip_visiual" file="../meshes/left_hand_mid_tip.STL"/>
+    <mesh name="left_hand_ring_link1_visiual" file="../meshes/left_hand_ring_link1.STL"/>
+    <mesh name="left_hand_ringback_link1_visiual" file="../meshes/left_hand_ringback_link1.STL"/>
+    <mesh name="left_hand_ring_link2_visiual" file="../meshes/left_hand_ring_link2.STL"/>
+    <mesh name="left_hand_ringback_link2_visiual" file="../meshes/left_hand_ringback_link2.STL"/>
+    <mesh name="left_hand_ring_tip_visiual" file="../meshes/left_hand_ring_tip.STL"/>
+    <mesh name="left_hand_pinky_link1_visiual" file="../meshes/left_hand_pinky_link1.STL"/>
+    <mesh name="left_hand_pinkyback_link1_visiual" file="../meshes/left_hand_pinkyback_link1.STL"/>
+    <mesh name="left_hand_pinky_link2_visiual" file="../meshes/left_hand_pinky_link2.STL"/>
+    <mesh name="left_hand_pinkyback_link2_visiual" file="../meshes/left_hand_pinkyback_link2.STL"/>
+    <mesh name="left_hand_pinky_tip_visiual" file="../meshes/left_hand_pinky_tip.STL"/>
+
+    <mesh name="left_hand_link_collision" file="../meshes_collision/left_hand_link_convex.STL"/>
+    <mesh name="left_hand_ee_link_collision" file="../meshes_collision/left_hand_ee_link_convex.STL"/>
+    <mesh name="left_hand_back_link_collision" file="../meshes_collision/left_hand_back_link_convex.STL"/>
+    <mesh name="left_hand_thumb_bend_link_collision" file="../meshes_collision/left_hand_thumb_bend_link_convex.STL"/>
+    <mesh name="left_hand_thumb_rota_link1_collision" file="../meshes_collision/left_hand_thumb_rota_link1_convex.STL"/>
+    <mesh name="left_hand_thumb_rotaback_link1_collision" file="../meshes_collision/left_hand_thumb_rotaback_link1_convex.STL"/>
+    <mesh name="left_hand_thumb_rota_link2_collision" file="../meshes_collision/left_hand_thumb_rota_link2_convex.STL"/>
+    <mesh name="left_hand_thumb_rotaback_link2_collision" file="../meshes_collision/left_hand_thumb_rotaback_link2_convex.STL"/>
+    <mesh name="left_hand_thumb_rota_tip_collision" file="../meshes_collision/left_hand_thumb_rota_tip_convex.STL"/>
+    <mesh name="left_hand_index_bend_link_collision" file="../meshes_collision/left_hand_index_bend_link_convex.STL"/>
+    <mesh name="left_hand_index_rota_link1_collision" file="../meshes_collision/left_hand_index_rota_link1_convex.STL"/>
+    <mesh name="left_hand_index_rotaback_link1_collision" file="../meshes_collision/left_hand_index_rotaback_link1_convex.STL"/>
+    <mesh name="left_hand_index_rota_link2_collision" file="../meshes_collision/left_hand_index_rota_link2_convex.STL"/>
+    <mesh name="left_hand_index_rotaback_link2_collision" file="../meshes_collision/left_hand_index_rotaback_link2_convex.STL"/>
+    <mesh name="left_hand_index_rota_tip_collision" file="../meshes_collision/left_hand_index_rota_tip_convex.STL"/>
+    <mesh name="left_hand_mid_link1_collision" file="../meshes_collision/left_hand_mid_link1_convex.STL"/>
+    <mesh name="left_hand_midback_link1_collision" file="../meshes_collision/left_hand_midback_link1_convex.STL"/>
+    <mesh name="left_hand_mid_link2_collision" file="../meshes_collision/left_hand_mid_link2_convex.STL"/>
+    <mesh name="left_hand_midback_link2_collision" file="../meshes_collision/left_hand_midback_link2_convex.STL"/>
+    <mesh name="left_hand_mid_tip_collision" file="../meshes_collision/left_hand_mid_tip_convex.STL"/>
+    <mesh name="left_hand_ring_link1_collision" file="../meshes_collision/left_hand_ring_link1_convex.STL"/>
+    <mesh name="left_hand_ringback_link1_collision" file="../meshes_collision/left_hand_ringback_link1_convex.STL"/>
+    <mesh name="left_hand_ring_link2_collision" file="../meshes_collision/left_hand_ring_link2_convex.STL"/>
+    <mesh name="left_hand_ringback_link2_collision" file="../meshes_collision/left_hand_ringback_link2_convex.STL"/>
+    <mesh name="left_hand_ring_tip_collision" file="../meshes_collision/left_hand_ring_tip_convex.STL"/>
+    <mesh name="left_hand_pinky_link1_collision" file="../meshes_collision/left_hand_pinky_link1_convex.STL"/>
+    <mesh name="left_hand_pinkyback_link1_collision" file="../meshes_collision/left_hand_pinkyback_link1_convex.STL"/>
+    <mesh name="left_hand_pinky_link2_collision" file="../meshes_collision/left_hand_pinky_link2_convex.STL"/>
+    <mesh name="left_hand_pinkyback_link2_collision" file="../meshes_collision/left_hand_pinkyback_link2_convex.STL"/>
+    <mesh name="left_hand_pinky_tip_collision" file="../meshes_collision/left_hand_pinky_tip_convex.STL"/>
+  </asset>
+  <equality>
+    <weld body1="left_hand_mocap"
+          body2="left_hand_link" />
+  </equality>
+  <worldbody>
+    <!-- Mocap body for left hand control -->
+    <body name="left_hand_mocap" mocap="true" pos="0. 0.245 0.6" quat="1 0 0 0">
+      <geom type="sphere" size="0.01" rgba="1 0 0 0.3" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="left_hand_link" pos="0. 0.245 0.6" quat="1 0 0 0">
+      <freejoint name="left_hand_freejoint"/>
+      <!-- Remove all virtual joints - no joints needed for mocap control -->
+
+      <geom type="box" size="0.02 0.04 0.04" pos="0.004 0 0.05" class="plastic_collision" density="1000"/>
+      <!-- <geom mesh="left_hand_link_collision" class="plastic_collision" density="1000"/> -->
+      <geom mesh="left_hand_link_visiual" class="plastic_visual"/>
+      <geom pos="0 0 0.065" mesh="left_hand_ee_link_visiual" class="plastic_visual"/>
+      <geom pos="0 0 0.065" mesh="left_hand_back_link_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+      <!-- <geom pos="0 0 0.065" mesh="left_hand_ee_link_collision" class="plastic_collision"/> -->
+      <!-- <geom pos="0 0 0.065" mesh="left_hand_back_link_collision" class="plastic_collision"/> -->
+      <body name="left_hand_thumb_bend_link" pos="0.0095 -0.0228 0.0305">
+        <inertial pos="-0.00116653 -0.0144315 6.50679e-05" quat="0.437731 0.496137 -0.541641 0.518521" mass="0.0118729" diaginertia="1.62676e-06 1.60121e-06 6.12031e-07"/>
+        <joint class="fringer_joint" name="left_hand_thumb_bend_joint" pos="0 0 0" axis="0 0 1" range="0 1.832"/>
+        <geom mesh="left_hand_thumb_bend_link_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+        <geom mesh="left_hand_thumb_bend_link_collision" class="plastic_collision"/>
+        <body name="left_hand_thumb_rota_link1" pos="0.0083177 -0.028599 -0.00178" quat="0.99124 -0.00265603 0.130499 0.0201745">
+          <inertial pos="-0.000437432 -0.0288073 0.00132757" quat="0.458813 0.650329 -0.342475 0.499274" mass="0.132699" diaginertia="4.33796e-05 3.82879e-05 1.41525e-05"/>
+          <joint class="fringer_joint" name="left_hand_thumb_rota_joint1" pos="0 0 0" axis="-1 0 0" range="-0.698 1.745"/>
+          <geom mesh="left_hand_thumb_rota_link1_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+          <geom mesh="left_hand_thumb_rota_link1_collision" class="plastic_collision"/>
+          <geom pos="0 -0.0553 0" mesh="left_hand_thumb_rotaback_link1_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+          <geom pos="0 -0.0553 0" mesh="left_hand_thumb_rotaback_link1_collision" class="plastic_collision"/>
+          <body name="left_hand_thumb_rota_link2" pos="0 -0.0553 0">
+            <inertial pos="-0.000240444 -0.0238771 0.00154665" quat="0.56089 0.56063 -0.436384 0.425047" mass="0.0353714" diaginertia="8.37799e-06 6.97104e-06 3.45892e-06"/>
+            <joint class="fringer_joint" name="left_hand_thumb_rota_joint2" pos="0 0 0" axis="-1 0 0" range="0 1.919"/>
+            <geom mesh="left_hand_thumb_rota_link2_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+            <geom mesh="left_hand_thumb_rota_link2_collision" class="plastic_collision"/>
+            <geom pos="0 -0.0502276 0" mesh="left_hand_thumb_rotaback_link2_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+            <geom pos="0 -0.0502276 0" mesh="left_hand_thumb_rotaback_link2_collision" class="plastic_collision"/>
+          </body>
+        </body>
+      </body>
+      <body name="left_hand_index_bend_link" pos="0.0065 -0.0265 0.0899">
+        <inertial pos="-0.000259146 6.74012e-05 -0.00444233" quat="0.707104 -0.00345012 -0.00345017 0.707093" mass="0.0691083" diaginertia="1.74e-05 1.67713e-05 3.44873e-06"/>
+        <joint class="fringer_joint" name="left_hand_index_bend_joint" pos="0 0 0" axis="1 0 0" range="-0.174 0.174"/>
+        <geom mesh="left_hand_index_bend_link_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+        <geom mesh="left_hand_index_bend_link_collision" class="plastic_collision"/>
+        <body name="left_hand_index_rota_link1" pos="0 0 0.0178">
+          <inertial pos="0.000543757 -2.61401e-05 0.033521" quat="0.70964 -0.00210567 0.0118818 0.704461" mass="0.062983" diaginertia="1.73856e-05 1.68626e-05 3.19185e-06"/>
+          <joint class="fringer_joint" name="left_hand_index_joint1" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+          <geom mesh="left_hand_index_rota_link1_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+          <geom mesh="left_hand_index_rota_link1_collision" class="plastic_collision"/>
+          <geom pos="0 0 0.0558" mesh="left_hand_index_rotaback_link1_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+          <geom pos="0 0 0.0558" mesh="left_hand_index_rotaback_link1_collision" class="plastic_collision"/>
+          <body name="left_hand_index_rota_link2" pos="0 0 0.0558">
+            <inertial pos="0.00203222 -0.000237333 0.0205312" quat="0.998622 -0.0302977 0.0186529 0.0385878" mass="0.0158929" diaginertia="2.83546e-06 2.77984e-06 8.40149e-07"/>
+            <joint class="fringer_joint" name="left_hand_index_joint2" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+            <geom mesh="left_hand_index_rota_link2_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+            <geom mesh="left_hand_index_rota_link2_collision" class="plastic_collision"/>
+            <geom pos="0 0 0.0422483" mesh="left_hand_index_rotaback_link2_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+            <geom pos="0 0 0.0422483" mesh="left_hand_index_rotaback_link2_collision" class="plastic_collision"/>
+          </body>
+        </body>
+      </body>
+      <body name="left_hand_mid_link1" pos="0.0065 -0.004 0.1082">
+        <inertial pos="0.000543757 -2.61401e-05 0.033521" quat="0.70964 -0.00210567 0.0118818 0.704461" mass="0.062983" diaginertia="1.73856e-05 1.68626e-05 3.19185e-06"/>
+        <joint class="fringer_joint" name="left_hand_mid_joint1" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+        <geom mesh="left_hand_mid_link1_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+        <geom mesh="left_hand_mid_link1_collision" class="plastic_collision"/>
+        <geom pos="0 0 0.0558" mesh="left_hand_midback_link1_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+        <geom pos="0 0 0.0558" mesh="left_hand_midback_link1_collision" class="plastic_collision"/>
+        <body name="left_hand_mid_link2" pos="0 0 0.0558">
+          <inertial pos="0.00203222 -0.000237333 0.0205312" quat="0.998622 -0.0302977 0.0186529 0.0385878" mass="0.0158929" diaginertia="2.83546e-06 2.77984e-06 8.40149e-07"/>
+          <joint class="fringer_joint" name="left_hand_mid_joint2" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+          <geom mesh="left_hand_mid_link2_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+          <geom mesh="left_hand_mid_link2_collision" class="plastic_collision"/>
+          <geom pos="0 0 0.0422483" mesh="left_hand_midback_link2_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+          <geom pos="0 0 0.0422483" mesh="left_hand_midback_link2_collision" class="plastic_collision"/>
+        </body>
+      </body>
+      <body name="left_hand_ring_link1" pos="0.0065 0.016 0.1052">
+        <inertial pos="0.000543757 -2.61401e-05 0.033521" quat="0.70964 -0.00210567 0.0118818 0.704461" mass="0.062983" diaginertia="1.73856e-05 1.68626e-05 3.19185e-06"/>
+        <joint class="fringer_joint" name="left_hand_ring_joint1" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+        <geom mesh="left_hand_ring_link1_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+        <geom mesh="left_hand_ring_link1_collision" class="plastic_collision"/>
+        <geom pos="0 0 0.0558" mesh="left_hand_ringback_link1_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+        <geom pos="0 0 0.0558" mesh="left_hand_ringback_link1_collision" class="plastic_collision"/>
+        <body name="left_hand_ring_link2" pos="0 0 0.0558">
+          <inertial pos="0.00203222 -0.000237333 0.0205312" quat="0.998622 -0.0302977 0.0186529 0.0385878" mass="0.0158929" diaginertia="2.83546e-06 2.77984e-06 8.40149e-07"/>
+          <joint class="fringer_joint" name="left_hand_ring_joint2" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+          <geom mesh="left_hand_ring_link2_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+          <geom mesh="left_hand_ring_link2_collision" class="plastic_collision"/>
+          <geom pos="0 0 0.0422483" mesh="left_hand_ringback_link2_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+          <geom pos="0 0 0.0422483" mesh="left_hand_ringback_link2_collision" class="plastic_collision"/>
+        </body>
+      </body>
+      <body name="left_hand_pinky_link1" pos="0.0065 0.036 0.1022">
+        <inertial pos="0.000543757 -2.61401e-05 0.033521" quat="0.70964 -0.00210567 0.0118818 0.704461" mass="0.062983" diaginertia="1.73856e-05 1.68626e-05 3.19185e-06"/>
+        <joint class="fringer_joint" name="left_hand_pinky_joint1" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+        <geom mesh="left_hand_pinky_link1_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+        <geom mesh="left_hand_pinky_link1_collision" class="plastic_collision"/>
+        <geom pos="0 0 0.0558" mesh="left_hand_pinkyback_link1_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+        <geom pos="0 0 0.0558" mesh="left_hand_pinkyback_link1_collision" class="plastic_collision"/>
+        <body name="left_hand_pinky_link2" pos="0 0 0.0558">
+          <inertial pos="0.00203139 -0.000237385 0.0205246" quat="0.999124 -0.0277437 0.0227393 0.0215483" mass="0.0158903" diaginertia="3.2148e-06 3.08688e-06 9.58999e-07"/>
+          <joint class="fringer_joint" name="left_hand_pinky_joint2" pos="0 0 0" axis="0 1 0" range="0 1.919"/>
+          <geom mesh="left_hand_pinky_link2_visiual" class="plastic_visual" rgba="0.055 0.055 0.063 1"/>
+          <geom mesh="left_hand_pinky_link2_collision" class="plastic_collision"/>
+          <geom pos="0 0 0.0422483" mesh="left_hand_pinkyback_link2_visiual" class="plastic_visual" rgba="0.941 0.941 0.941 1"/>
+          <geom pos="0 0 0.0422483" mesh="left_hand_pinkyback_link2_collision" class="plastic_collision"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+
+
+
+  <actuator>
+    <!-- Remove virtual joint actuators, keep only finger actuators -->
+    <position name="left_actuator_thumb_bend" joint="left_hand_thumb_bend_joint" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.832" forcerange="-3 3"/>
+    <position name="left_actuator_thumb_rota1" joint="left_hand_thumb_rota_joint1" kp="15" kv="0.2" ctrllimited="false" ctrlrange="-0.698 1.745" forcerange="-3 3"/>
+    <position name="left_actuator_thumb_rota2" joint="left_hand_thumb_rota_joint2" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-1 1"/>
+    <position name="left_actuator_index_bend" joint="left_hand_index_bend_joint" kp="15" kv="0.2" ctrllimited="false" ctrlrange="-0.174 0.174" forcerange="-3 3"/>
+    <position name="left_actuator_index1" joint="left_hand_index_joint1" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-3 3"/>
+    <position name="left_actuator_index2" joint="left_hand_index_joint2" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-1 1"/>
+    <position name="left_actuator_mid1" joint="left_hand_mid_joint1" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-3 3"/>
+    <position name="left_actuator_mid2" joint="left_hand_mid_joint2" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-1 1"/>
+    <position name="left_actuator_ring1" joint="left_hand_ring_joint1" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-3 3"/>
+    <position name="left_actuator_ring2" joint="left_hand_ring_joint2" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-1 1"/>
+    <position name="left_actuator_pinky1" joint="left_hand_pinky_joint1" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-3 3"/>
+    <position name="left_actuator_pinky2" joint="left_hand_pinky_joint2" kp="15" kv="0.2" ctrllimited="false" ctrlrange="0 1.919" forcerange="-1 1"/>
+  </actuator>
+
+</mujoco>

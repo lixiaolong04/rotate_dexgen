@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>01 · 强化学习与 MDP 基础</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 01 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 01 · 地基</div>
+  <h1>强化学习与 MDP 基础</h1>
+  <p class="sub">在写一行公式之前，先搞懂一件事：到底什么在"学"，又在学"什么"。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<h2 id="what">一、强化学习是什么</h2>
+
+<div class="intuition">
+你养了一只小狗。它做对了动作（坐下）你就给一块小饼干，做错了就没有。一开始小狗乱试，慢慢地它发现"听到坐下→屁股着地→有饼干"，于是越来越爱坐下。<br><br>
+强化学习就是这件事的数学版：一个<strong>智能体（agent）</strong>在<strong>环境（environment）</strong>里不停地<strong>试动作</strong>，环境给它<strong>奖励（reward）</strong>，它的目标是让<strong>长期总奖励</strong>最大。没人告诉它"正确答案是什么"，它只能从奖励里自己琢磨。
+</div>
+
+<p>在我们的项目里：</p>
+<ul>
+  <li><strong>智能体</strong> = 控制机械手的神经网络（策略）。</li>
+  <li><strong>环境</strong> = Isaac Sim 仿真里的那只手 + 手里的圆柱体 + 物理引擎。</li>
+  <li><strong>动作</strong> = 给 21 个关节发的目标位置增量。</li>
+  <li><strong>奖励</strong> = 物体绕指定轴转得越快越稳，分越高（详见<a href="02-env-reward.html">第 02 章</a>）。</li>
+</ul>
+
+<p>它和另外两类机器学习的区别值得记住：</p>
+<table>
+  <thead><tr><th>范式</th><th>有没有"标准答案"</th><th>一句话</th></tr></thead>
+  <tbody>
+    <tr><td>监督学习</td><td>有（每张图都有标签）</td><td>模仿给定的输入→输出映射</td></tr>
+    <tr><td>无监督学习</td><td>没有标签，只有数据</td><td>找数据里的结构</td></tr>
+    <tr><td><b>强化学习</b></td><td>没有答案，只有<b>奖励信号</b></td><td>通过试错最大化长期回报</td></tr>
+  </tbody>
+</table>
+
+<h2 id="loop">二、智能体—环境交互回路</h2>
+
+<p>强化学习的世界按"回合制"运转。在每个离散时刻 $t$：</p>
+<ol>
+  <li>智能体观察到状态 $s_t$；</li>
+  <li>它按策略 $\pi$ 选一个动作 $a_t$；</li>
+  <li>环境根据物理规律转移到新状态 $s_{t+1}$，并吐出一个奖励 $r_t$；</li>
+  <li>循环回到第 1 步。</li>
+</ol>
+
+<div class="viz">
+  <div class="viz-title">智能体—环境交互回路</div>
+  <div class="viz-sub">绿色小球是"动作"流向环境，橙色小球是"奖励/新状态"流回智能体。点按钮控制。</div>
+  <canvas id="loopCanvas"></canvas>
+  <div class="controls" id="loopCtl"></div>
+  <div class="readout" id="loopOut"></div>
+</div>
+
+<h2 id="mdp">三、把它写成数学：马尔可夫决策过程（MDP）</h2>
+
+<p>上面那个回路的严格数学模型叫 <strong>马尔可夫决策过程（Markov Decision Process, MDP）</strong>，是一个五元组：</p>
+
+<div class="math-block">
+$$\mathcal{M} = \langle\, \mathcal{S},\; \mathcal{A},\; P,\; R,\; \gamma \,\rangle$$
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · MDP 五元组</div>
+  <table>
+    <thead><tr><th>符号</th><th>名字</th><th>含义（含本项目对应）</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\mathcal{S}$</td><td>状态空间</td><td>所有可能状态的集合。本项目是约 186 维实向量空间 $\RR^{186}$。</td></tr>
+      <tr><td class="sym-col">$\mathcal{A}$</td><td>动作空间</td><td>所有可能动作的集合。本项目 $\mathcal{A}=[-1,1]^{21}$（21 个关节，归一化后裁到 ±1）。</td></tr>
+      <tr><td class="sym-col">$P(s'\mid s,a)$</td><td>状态转移概率</td><td>在 $s$ 做 $a$ 后转到 $s'$ 的概率。本项目由物理引擎隐式给出，我们<b>不知道也不需要它的解析式</b>。</td></tr>
+      <tr><td class="sym-col">$R(s,a)$</td><td>奖励函数</td><td>即时奖励。本项目是六项加权和（第 02 章）。</td></tr>
+      <tr><td class="sym-col">$\gamma\in[0,1)$</td><td>折扣因子</td><td>对未来奖励"打折"的系数。本项目 $\gamma=0.99$。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="markov">"马尔可夫"是什么意思？</h3>
+<div class="intuition">
+"马尔可夫性"就是一句大白话：<strong>未来只取决于现在，跟你怎么走到现在的无关。</strong><br>
+下棋时，只要看当前棋盘就能决定下一步，不需要知道前面每一步是怎么下的。我们设计状态时，就要尽量把"决定未来所需的信息"都塞进当前状态里——这也是为什么本项目状态里要放近 3 帧历史。
+</div>
+<p>用公式说，就是转移概率只依赖当前状态和动作：</p>
+<div class="math-block">
+$$P(s_{t+1}\mid s_t, a_t, s_{t-1}, a_{t-1}, \dots) = P(s_{t+1}\mid s_t, a_t).$$
+</div>
+
+<h2 id="policy">四、策略 π：智能体的大脑</h2>
+<p><strong>策略</strong>是从状态到动作的映射，也就是"看到这个情况，我该怎么做"。它有两种形式：</p>
+<ul>
+  <li><strong>确定性策略</strong> $a = \mu_\theta(s)$：输入状态，直接输出一个动作。</li>
+  <li><strong>随机策略</strong> $a \sim \pi_\theta(\cdot\mid s)$：输出一个动作的<em>概率分布</em>，再从中采样。</li>
+</ul>
+<p>本项目用的是<strong>随机策略</strong>，具体是高斯分布（<a href="03-gaussian-policy.html">第 03 章</a>详解）。下标 $\theta$ 表示策略由神经网络参数 $\theta$ 决定——<strong>"学习"就是在调这个 $\theta$</strong>。</p>
+
+<div class="note">
+<b>记住这条主线。</b> 整个强化学习要做的事，就是找到一组网络参数 $\theta$，使得按 $\pi_\theta$ 行动能拿到尽量高的长期回报。后面所有的 PPO、GAE、归一化，都是为了"更稳、更快地把这个 $\theta$ 调好"。
+</div>
+
+<h2 id="return">五、回报 G：把"长期"量化</h2>
+<p>智能体要的不是某一步的奖励，而是<strong>从现在起，未来所有奖励的折扣总和</strong>，称为<strong>回报（return）</strong>：</p>
+
+<div class="math-block">
+$$G_t \;=\; r_t + \gamma\, r_{t+1} + \gamma^2 r_{t+2} + \cdots \;=\; \sum_{k=0}^{\infty} \gamma^{k}\, r_{t+k}.$$
+</div>
+
+<h3 id="why-gamma">为什么要打折（γ）？</h3>
+<div class="intuition">
+"今天的 100 块比明年的 100 块更香。"折扣因子 γ 就是这种"现在的奖励更值钱"的耐心程度。<br>
+• γ 接近 0：极度短视，只看眼前一步。<br>
+• γ 接近 1：很有远见，把很久以后的奖励也几乎全额计入。<br>
+本项目用 γ = 0.99，意思是"相当有耐心"。
+</div>
+
+<p>数学上 γ 还有两个硬作用：</p>
+<ol>
+  <li><strong>保证收敛</strong>：只要奖励有界 $|r|\le R_{\max}$，无穷级数 $\sum \gamma^k r_{t+k}$ 收敛，因为它被等比级数 $\frac{R_{\max}}{1-\gamma}$ 控制住（这是几何级数求和，$\sum_{k=0}^\infty \gamma^k = \frac{1}{1-\gamma}$）。</li>
+  <li><strong>衡量"有效视野"</strong>：权重 $\gamma^k$ 衰减到 $1/e$ 大约需要 $k \approx \frac{1}{1-\gamma}$ 步。γ = 0.99 对应约 100 步的有效视野。</li>
+</ol>
+
+<div class="viz">
+  <div class="viz-title">折扣权重 γ<sup>k</sup> 与有效视野</div>
+  <div class="viz-sub">拖动 γ 看每一步奖励被"打折"成多少（柱子高度 = γ<sup>k</sup>），以及若每步奖励都为 1 时的总回报。</div>
+  <canvas id="gammaCanvas"></canvas>
+  <div class="controls" id="gammaCtl"></div>
+  <div class="readout" id="gammaOut"></div>
+</div>
+
+<h2 id="value">六、价值函数 V、Q 与优势 A</h2>
+<p>回报 $G_t$ 是一次具体经历的结果，带运气成分。我们更想知道"<strong>平均而言</strong>，从某状态出发能拿多少"——这就是<strong>价值函数</strong>，它是回报的期望。</p>
+
+<h4>状态价值 V</h4>
+<div class="math-block">
+$$V^\pi(s) \;=\; \EE_{\pi}\!\left[\, G_t \;\middle|\; s_t = s \,\right].$$
+</div>
+<p class="muted">读作："在状态 $s$、之后一直按策略 $\pi$ 行动，能拿到的回报期望。"本项目里 Critic 网络就是在估计它。</p>
+
+<h4>动作价值 Q</h4>
+<div class="math-block">
+$$Q^\pi(s,a) \;=\; \EE_{\pi}\!\left[\, G_t \;\middle|\; s_t = s,\, a_t = a \,\right].$$
+</div>
+<p class="muted">读作："在状态 $s$ <em>先强行做动作 $a$</em>，之后再按 $\pi$ 行动"的回报期望。</p>
+
+<h4>优势 A：这一步比平均好多少</h4>
+<div class="math-block">
+$$A^\pi(s,a) \;=\; Q^\pi(s,a) - V^\pi(s).$$
+</div>
+<div class="intuition">
+V 是"这个局面平均能得多少分"，Q 是"在这个局面非要走这一步能得多少分"。两者相减得到优势 A：<strong>A &gt; 0 说明这一步比平时随便走要好，应该多做；A &lt; 0 说明这步亏了，应该少做。</strong>PPO 正是靠优势 A 来决定"把哪个动作的概率调大、哪个调小"。怎么高效估计 A，是<a href="04-gae.html">第 04 章 GAE</a> 的主题。
+</div>
+
+<h2 id="bellman">七、贝尔曼方程：价值的递归结构</h2>
+<p>价值函数有一个漂亮的自洽关系——<strong>贝尔曼方程</strong>。它说"现在的价值 = 即时奖励 + 打折后的下一步价值"：</p>
+<div class="math-block">
+$$V^\pi(s) \;=\; \EE_{a\sim\pi(\cdot|s)}\Big[\, R(s,a) + \gamma\, \EE_{s'\sim P(\cdot|s,a)}\big[\,V^\pi(s')\,\big]\Big].$$
+</div>
+<p>推导其实只用了回报的定义，把第一项拆出来：</p>
+<div class="math-block">
+$$G_t = r_t + \gamma\big(r_{t+1} + \gamma r_{t+2} + \cdots\big) = r_t + \gamma\, G_{t+1}.$$
+</div>
+<p>两边取期望、用马尔可夫性，就得到上面的方程。<strong>这个"当前=即时+折扣未来"的递归，正是后面 TD 误差与 GAE 的源头</strong>，请务必记住。</p>
+
+<h2 id="objective">八、终极目标 J(θ)</h2>
+<p>把一切收束成一句话：强化学习要找的最优参数 $\theta^\star$，是让"从初始状态分布出发的期望回报"最大的那组参数：</p>
+<div class="math-block">
+$$\theta^\star \;=\; \argmax_{\theta}\; J(\theta), \qquad
+J(\theta) \;=\; \EE_{\tau\sim\pi_\theta}\!\left[\sum_{t=0}^{T} \gamma^t\, r_t\right].$$
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · 目标函数</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\theta$</td><td>策略神经网络的全部参数（权重与偏置）。</td></tr>
+      <tr><td class="sym-col">$\tau$</td><td>一条轨迹 $\tau=(s_0,a_0,r_0,s_1,a_1,\dots)$，即一整局的经历。</td></tr>
+      <tr><td class="sym-col">$\tau\sim\pi_\theta$</td><td>轨迹由当前策略与环境共同采样产生。</td></tr>
+      <tr><td class="sym-col">$\EE[\cdot]$</td><td>对所有可能轨迹取期望（平均），因为策略随机、环境也可能随机。</td></tr>
+      <tr><td class="sym-col">$T$</td><td>一局的最大步数（本项目由 episode 时长决定）。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>怎么对 $J(\theta)$ 做梯度上升？这就是"策略梯度"的故事，也是 <a href="05-ppo.html">PPO（第 05 章）</a>的起点。但要让策略梯度真正可用，我们还需要先理解<a href="03-gaussian-policy.html">高斯策略（第 03 章）</a>和<a href="04-gae.html">优势估计（第 04 章）</a>。</p>
+
+<div class="tip">
+<b>本章小结。</b> 强化学习 = 在 MDP 里通过试错最大化折扣回报。核心词：状态 $s$、动作 $a$、奖励 $r$、策略 $\pi_\theta$、折扣 $\gamma$、回报 $G$、价值 $V/Q$、优势 $A$、目标 $J(\theta)$。下一章我们把这些抽象符号，变成本项目里一个个具体的数字向量。
+</div>
+
+<div class="pager">
+  <a class="disabled" href="#"></a>
+  <a class="next" href="02-env-reward.html"><div class="dir">下一章 →</div><div class="ttl">02 · 本项目的 MDP 与奖励塑形</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 01 章</footer>
+
+<script>
+/* ---------- 交互回路动画 ---------- */
+(function () {
+  const cv = document.getElementById('loopCanvas');
+  const out = document.getElementById('loopOut');
+  let ctx, running = true, t0 = performance.now(), step = 0, speed = 1;
+  function draw(now) {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0, 0, W, H);
+    const ax = W * 0.24, ex = W * 0.76, cy = H / 2, bw = Math.min(170, W*0.3), bh = 92;
+    // agent box
+    Viz.roundRect(ctx, ax - bw/2, cy - bh/2, bw, bh, 16); ctx.fillStyle = T.accent; ctx.fill();
+    Viz.text(ctx, '智能体', ax, cy - 6, '#fff', '600 17px -apple-system', 'center');
+    Viz.text(ctx, '策略 πθ', ax, cy + 18, 'rgba(255,255,255,.85)', '13px -apple-system', 'center');
+    // env box
+    Viz.roundRect(ctx, ex - bw/2, cy - bh/2, bw, bh, 16); ctx.fillStyle = T.green; ctx.fill();
+    Viz.text(ctx, '环境', ex, cy - 6, '#fff', '600 17px -apple-system', 'center');
+    Viz.text(ctx, 'Isaac Sim 物理', ex, cy + 18, 'rgba(255,255,255,.85)', '13px -apple-system', 'center');
+    // arrows (top: action, bottom: reward+state)
+    const x1 = ax + bw/2, x2 = ex - bw/2;
+    drawArc(x1, cy - bh/2, x2, cy - bh/2, -46, T.faint, '动作 a', T.soft);
+    drawArc(x2, cy + bh/2, x1, cy + bh/2, 46, T.faint, '奖励 r + 新状态 s′', T.soft);
+    // moving packets
+    const phase = ((now - t0) * 0.00045 * speed) % 1;
+    packet(x1, x2, cy - bh/2, -46, phase, T.green);
+    packet(x2, x1, cy + bh/2, 46, phase, T.orange);
+    if (phase < 0.02) { step++; }
+    out.innerHTML = `已交互 <b>${step}</b> 步。每一步：智能体送出动作 → 环境返回奖励和新状态 → 智能体据此更新认知。`;
+    if (running) requestAnimationFrame(draw);
+  }
+  function drawArc(x1, y1, x2, y2, bulge, color, label, lcol) {
+    const mx = (x1+x2)/2, my = (y1+y2)/2 + bulge;
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx, my, x2, y2); ctx.stroke();
+    // arrowhead
+    const ang = Math.atan2(y2 - my, x2 - mx);
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - 9*Math.cos(ang - .4), y2 - 9*Math.sin(ang - .4));
+    ctx.lineTo(x2 - 9*Math.cos(ang + .4), y2 - 9*Math.sin(ang + .4));
+    ctx.closePath(); ctx.fill();
+    Viz.text(ctx, label, mx, my + (bulge < 0 ? -6 : 16), lcol, '13px -apple-system', 'center');
+  }
+  function packet(x1, x2, y, bulge, p, color) {
+    const mx = (x1+x2)/2, my = y + bulge;
+    const bx = (1-p)*(1-p)*x1 + 2*(1-p)*p*mx + p*p*x2;
+    const by = (1-p)*(1-p)*y + 2*(1-p)*p*my + p*p*y;
+    Viz.dot(ctx, bx, by, 7, color);
+  }
+  function init() { ctx = Viz.setupCanvas(cv, null, 240); }
+  Viz.onRedraw(init);
+  requestAnimationFrame(draw);
+  Viz.button(document.getElementById('loopCtl'), '暂停 / 继续', function () {
+    running = !running; if (running) { t0 = performance.now(); requestAnimationFrame(draw); }
+  });
+  Viz.slider(document.getElementById('loopCtl'), { label: '速度', min: 0.3, max: 3, value: 1, fmt: v=>(+v).toFixed(1)+'×', oninput: v => speed = v });
+})();
+
+/* ---------- γ 折扣权重柱状图 ---------- */
+(function () {
+  const cv = document.getElementById('gammaCanvas');
+  const out = document.getElementById('gammaOut');
+  let ctx, gamma = 0.99;
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0, 0, W, H);
+    const box = { x: 48, y: 18, w: W - 70, h: H - 52 };
+    Viz.gridlines(ctx, box, 0, 4);
+    const N = 60;
+    // bars γ^k
+    const bw = box.w / N;
+    for (let k = 0; k < N; k++) {
+      const w = Math.pow(gamma, k);
+      const bh = w * box.h;
+      const x = box.x + k * bw;
+      const grad = ctx.createLinearGradient(0, box.y + box.h - bh, 0, box.y + box.h);
+      grad.addColorStop(0, T.accent); grad.addColorStop(1, T.purple);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x + 0.5, box.y + box.h - bh, Math.max(1, bw - 1), bh);
+    }
+    Viz.axes(ctx, box, { xlabel: '未来第 k 步', ylabel: '权重 γᵏ' });
+    // y ticks
+    for (let j = 0; j <= 4; j++) {
+      Viz.text(ctx, (1 - j/4).toFixed(2), box.x - 6, box.y + box.h*j/4 + 4, T.faint, '11px monospace', 'right');
+    }
+    // effective horizon marker
+    const kEff = gamma < 1 ? 1/(1-gamma) : N;
+    if (kEff < N) {
+      const xe = box.x + kEff * bw;
+      ctx.strokeStyle = T.orange; ctx.setLineDash([4,4]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(xe, box.y); ctx.lineTo(xe, box.y + box.h); ctx.stroke(); ctx.setLineDash([]);
+      Viz.text(ctx, '有效视野≈'+kEff.toFixed(0)+'步', xe + 4, box.y + 14, T.orange, '11px -apple-system', 'left');
+    }
+    const sumInf = gamma < 1 ? 1/(1-gamma) : Infinity;
+    out.innerHTML = `当 γ = <b>${gamma.toFixed(3)}</b> 时：若每步奖励都 = 1，总回报 G = Σγᵏ = <b>${isFinite(sumInf)?sumInf.toFixed(1):'∞'}</b>；有效视野 ≈ <b>${(1/(1-gamma)).toFixed(0)}</b> 步。γ 越大越有远见，但学习也越难。`;
+  }
+  function init() { ctx = Viz.setupCanvas(cv, null, 260); draw(); }
+  Viz.onRedraw(init);
+  Viz.slider(document.getElementById('gammaCtl'), { label: '折扣因子 γ', min: 0.5, max: 0.999, value: 0.99, step: 0.001, fmt: v=>(+v).toFixed(3), oninput: v => { gamma = v; draw(); } });
+})();
+</script>
+</body>
+</html>

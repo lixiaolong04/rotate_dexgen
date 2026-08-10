@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>11 · Sim-to-Real 实战</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 11 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 11 · 收官深度章</div>
+  <h1>Sim-to-Real 实战</h1>
+  <p class="sub">仿真里练成的策略，怎么真的搬到一只会发热、有延迟、传感器带噪声的真手上转起来？这一章把"过桥"的每块木板拆开看。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<h2 id="gap">一、现实落差（reality gap）到底是什么</h2>
+<div class="intuition">
+你在驾校模拟器里练得出神入化，第一次开真车却手忙脚乱——方向盘更重、刹车更软、还有模拟器里没有的风噪和颠簸。<strong>仿真与真实之间这道"哪儿哪儿都差一点"的鸿沟，就是 reality gap。</strong> sim-to-real 的全部努力，都是为了让"模拟器里的高手"一上真车也不翻。
+</div>
+<p>这道鸿沟有四个主要来源，记住它们，后面每个技术都在堵其中一两个口子：</p>
+<table>
+  <thead><tr><th>落差来源</th><th>仿真里</th><th>真机上</th></tr></thead>
+  <tbody>
+    <tr><td><b>动力学</b></td><td>质量/摩擦/质心是设定值</td><td>未知、随物体而变、还会磨损</td></tr>
+    <tr><td><b>感知</b></td><td>状态精确可读</td><td>编码器有误差、触觉有噪声和漂移</td></tr>
+    <tr><td><b>延迟</b></td><td>近似零延迟、定步长</td><td>通信/计算/电机响应都要时间</td></tr>
+    <tr><td><b>驱动</b></td><td>理想 PD、力矩立即生效</td><td>电机有电流上限、有死区、会发热降额</td></tr>
+  </tbody>
+</table>
+
+<h2 id="strategies">二、三大流派：怎么过桥</h2>
+<p>学界堵 reality gap 有三条主路线。理解它们的取舍，才懂本项目为什么这么选。</p>
+<table>
+  <thead><tr><th>流派</th><th>思路</th><th>代价 / 风险</th></tr></thead>
+  <tbody>
+    <tr><td><b>系统辨识</b><br>(System ID)</td><td>把仿真<b>精确校准</b>到匹配这一台真机</td><td>费力、换个物体就失效、永远有残差</td></tr>
+    <tr><td><b>域随机化</b><br>(Domain Randomization)</td><td>把仿真<b>故意搞乱成千百种</b>，逼出"放之四海皆准"的策略，<b>零样本</b>上真机</td><td>太宽则学不动/保守；需要配合"认出当前世界"</td></tr>
+    <tr><td><b>域自适应</b><br>(Domain Adaptation / RMA)</td><td>训练时见多识广，部署时<b>从历史在线推断</b>当前是哪种世界</td><td>需两阶段、要设计可推断的隐变量</td></tr>
+  </tbody>
+</table>
+<div class="note">
+<b>本项目 = 域随机化 + 域自适应。</b> 用<a href="09-domain-randomization.html">域随机化（第 09 章）</a>制造千万种世界 + <a href="06-rma-distillation.html">RMA（第 06 章）</a>让学生从历史认出"我现在身处哪种世界"。完全<b>不做精细系统辨识</b>——这正是它能换不同圆柱、零样本上真机的底气。
+</div>
+
+<div class="viz">
+  <div class="viz-title">现实落差 & 域随机化覆盖</div>
+  <div class="viz-sub">蓝色是仿真训练见过的参数分布，橙色竖线是这台真机的真实参数。拖"随机化宽度"：太窄会漏掉真机（zero-shot 失败），够宽才能罩住它。再拖"真机参数"模拟换了个更重/更滑的物体。</div>
+  <canvas id="gapCanvas"></canvas>
+  <div class="controls" id="gapCtl"></div>
+  <div class="readout" id="gapOut"></div>
+</div>
+
+<h2 id="bridge">三、本项目的桥：三件套总览</h2>
+<p>把零散技术拼成一张图。真机部署时，<strong>只有学生通路在工作</strong>（无特权信息）：</p>
+<div class="card">
+<p style="margin:0"><b>① 域随机化（训练期）</b>：质量、质心、PD 增益、随机外力、关节噪声、重力课程 → 制造世界的多样性，这些量同时是教师的特权信息。<br>
+<b>② RMA 蒸馏（训练期）</b>：TConv 从 30 帧历史估计隐变量 ẑ ≈ 教师的 z → 学会"认出当前世界"。<br>
+<b>③ 观测/动作对齐（部署期）</b>：保证真机喂给网络的每个数字，和仿真训练时<b>含义、量纲、顺序完全一致</b> → 网络才不会"看错题"。</p>
+</div>
+<p>第 ①②已在第 09、06 章详讲，本章聚焦最容易被忽视、却最致命的第 ③ 件——以及延迟、触觉、部署运行时这些"真机才有的事"。</p>
+
+<h2 id="obs-align">四、观测对齐：让真机和仿真"看到同一道题"</h2>
+<div class="intuition">
+网络是个挑剔的考生：它只认训练时那套"题面格式"。哪怕真机测得再准，只要你把触觉力的单位、或者关节的排列顺序换了，对网络来说就是一道全新的、它没复习过的题——立刻翻车。<strong>所以部署的头等大事，是把观测一字一句对齐到训练时的样子。</strong>
+</div>
+<p>仿真与真机用<strong>同一套单帧 64 维布局</strong>（部署变体 SharpaWave 为 22 DOF，观测 192 = 64×3 帧）：</p>
+<div class="math-block">
+$$64 \;=\; \underbrace{22}_{\text{归一化关节角}} + \underbrace{22}_{\text{控制目标}} + \underbrace{5}_{\text{指尖触觉}} + \underbrace{15}_{\text{接触点}}.$$
+</div>
+<p>关节角在两边都用同一个 <code>unscale</code> 公式归一化到 $[-1,1]$，保证量纲一致：</p>
+<div class="math-block">
+$$\hat q \;=\; \frac{2q - (q_{\max}+q_{\min})}{q_{\max}-q_{\min}}.$$
+</div>
+<span class="code-cap">sharpa_wave_deploy_env.py · compute_observations（与训练同构）</span>
+<pre><code class="lang-py">cur_obs_buf = unscale(self.hand_dof_pos, lower, upper).unsqueeze(1)   # 关节角，同一归一化
+cur_obs_buf = torch.cat([cur_obs_buf, cur_tar_buf], dim=-1)          # 拼控制目标
+cur_obs_buf = torch.cat([cur_obs_buf, sensed_contacts, contact_pos], dim=-1)  # 触觉 + 接触点
+self.obs_buf_lag_history = torch.cat([prev_obs_buf, cur_obs_buf], dim=1)
+obs_buf = self.obs_buf_lag_history[:, -3:].reshape(num_envs, -1)     # 最近 3 帧 → 192</code></pre>
+
+<div class="viz">
+  <div class="viz-title">sim ↔ real 观测对齐</div>
+  <div class="viz-sub">单帧观测分四块。点击任意一块，看它在仿真里的来源 vs 真机上的来源——对齐的关键就是"同一含义、同一量纲、同一位置"。</div>
+  <div id="alignDiagram"></div>
+  <div class="readout" id="alignOut">点一块观测看看它两边怎么对齐。</div>
+</div>
+
+<div class="warn">
+<b>归一化统计量也要对齐！</b> 部署时 <code>restore_test</code> 不仅加载网络权重，还加载训练得到的 <code>running_mean_std</code>（观测归一化）和 <code>sa_mean_std</code>（历史归一化）。它们在部署时<b>冻结</b>（第 08 章）。少加载任何一个，输入分布就会偏移、策略行为漂移。
+</div>
+
+<h2 id="remap">五、关节重映射：同一只手，两套编号</h2>
+<div class="intuition">
+IsaacLab 和 SharpaWave 固件对 22 个关节的<strong>编号顺序不一样</strong>——就像同一支球队，仿真按身高排号、真机按位置排号。发指令前必须"翻译"一下号码，否则你想弯食指，真机却去弯了拇指。
+</div>
+<p>代码用两张固定的置换索引来回翻译：发指令时 IsaacLab→SharpaWave，读状态时 SharpaWave→IsaacLab。它们互为逆置换。</p>
+<span class="code-cap">utils/misc.py · 关节序重映射</span>
+<pre><code class="lang-py">_ISAACLAB2SHARPA_IDX = torch.tensor([4,9,14,19,21,0,5,10,15,1,6,11,16,3,8,13,18,2,7,12,17,20])
+_SHARPA2ISAACLAB_IDX = torch.tensor([5,9,17,13,0,6,10,18,14,1,7,11,19,15,2,8,12,20,16,3,21,4])
+
+def dof_isaaclab2sharpa(dof_pos):  # 发给真机前：策略坐标 → 固件坐标
+    return dof_pos.index_select(-1, _ISAACLAB2SHARPA_IDX)
+def dof_sharpa2isaaclab(dof_pos):  # 读回状态后：固件坐标 → 策略坐标
+    return dof_pos.index_select(-1, _SHARPA2ISAACLAB_IDX)</code></pre>
+<span class="code-cap">部署时的用法</span>
+<pre><code class="lang-py"># 下发：策略算出的目标 → 翻译成固件顺序 → set
+command = dof_isaaclab2sharpa(self.cur_targets.squeeze()).cpu().numpy()
+self.hand.set_joint_position(command)
+# 读取：固件返回角度 → 翻译回策略顺序
+self.hand_dof_pos = dof_sharpa2isaaclab(torch.tensor(self.hand.get_states().angles))</code></pre>
+
+<div class="viz">
+  <div class="viz-title">关节重映射可视化（22 DOF 置换）</div>
+  <div class="viz-sub">左列 IsaacLab 策略序，右列 SharpaWave 固件序，连线是 dof_isaaclab2sharpa 的对应。悬停任意关节高亮它去了哪儿。这就是"翻译号码"。</div>
+  <canvas id="remapCanvas"></canvas>
+  <div class="readout" id="remapOut">悬停左/右任意关节，看它映射到对面哪个位置。</div>
+</div>
+
+<h2 id="latency">六、延迟与控制频率</h2>
+<p>真机的每一步都要花时间。本项目用固定<strong>控制频率 20 Hz</strong>，即每步目标节拍 $\Delta t_{\text{target}} = 1/20 = 0.05\text{s}$，并在循环里"睡"到节拍对齐，保证时序稳定：</p>
+<div class="math-block">
+$$\text{若 } \Delta t_{\text{loop}} < \Delta t_{\text{target}}：\quad \text{sleep}\big(\Delta t_{\text{target}} - \Delta t_{\text{loop}}\big).$$
+</div>
+<span class="code-cap">sharpa_wave_deploy_env.py · step（节拍对齐）</span>
+<pre><code class="lang-py">loop_dt = time.perf_counter() - self._last_step_wall
+if loop_dt &lt; self.target_dt:
+    time.sleep(self.target_dt - loop_dt)     # 补足到 1/control_freq
+self._last_step_wall = time.perf_counter()</code></pre>
+<div class="symtable">
+  <div class="symtitle">符号表 · 延迟相关</div>
+  <table>
+    <thead><tr><th>量</th><th>仿真</th><th>真机</th></tr></thead>
+    <tbody>
+      <tr><td>控制频率</td><td>由 decimation 决定</td><td><code>control_freq=20</code> Hz</td></tr>
+      <tr><td>感知延迟</td><td><code>contact_latency</code> 显式建模</td><td>通信/计算固有延迟</td></tr>
+      <tr><td>触觉帧率</td><td>—</td><td>板载 30 fps / 主机 180 fps</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="tip">
+<b>为什么训练时就要建模延迟与噪声？</b> 因为延迟、触觉噪声、关节读数噪声都是 reality gap 的一部分。训练时在仿真里<b>故意加上它们</b>（第 09 章的 joint_noise、contact_latency、contact_sensor_noise），策略才会对真机的"不完美"免疫。这就是把"真机的脏"提前喂给策略。
+</div>
+
+<h2 id="tactile">七、触觉的 sim-to-real</h2>
+<p>触觉是这个项目的特色，也是 reality gap 的重灾区。两边要对齐成同一个"5 维指尖力"：</p>
+<table>
+  <thead><tr><th></th><th>仿真</th><th>真机</th></tr></thead>
+  <tbody>
+    <tr><td>力从哪来</td><td>接触传感器净力范数</td><td>触觉模组的 F6 前 3 分量取范数</td></tr>
+    <tr><td>加工</td><td>平滑 + 延迟 + 噪声 (+可二值化)</td><td><code>force_scale</code> 缩放 + 阈值置零 (+可二值化)</td></tr>
+    <tr><td>标定</td><td>无需</td><td>上电先 <b>calibrate</b> 归零基线</td></tr>
+  </tbody>
+</table>
+<span class="code-cap">sharpa_wave_deploy_env.py · get_tactile_info（真机侧加工）</span>
+<pre><code class="lang-py">force[ch] = torch.norm(torch.tensor(f6)[:3])   # F6 前三分量的范数 = 法向接触力
+force *= self.cfg.force_scale                  # 1/1.5，把真机力缩放到训练量纲
+force[force < self.cfg.contact_threshold] = 0  # 低于 0.2 视为无接触，抑噪
+if self.cfg.binary_contact:
+    force = torch.where(force > thresh, 1.0, 0.0)</code></pre>
+<p class="muted">触觉帧率可切换：<code>--enable_on_board</code> 用板载 30fps、省主机算力；默认主机模式 180fps、信息更密。两种都把信号对齐成训练时那套 5 维力 + 接触点占位。</p>
+
+<h2 id="runtime">八、部署运行时：上手的每一步</h2>
+<p>部署脚本只用<strong>学生（ProprioAdapt）</strong>，推理循环极简——归一化观测与历史 → 取动作均值 → 下发：</p>
+<span class="code-cap">scripts/deploy.py · 主循环（无特权信息）</span>
+<pre><code class="lang-py">agent.restore_test(resume_path)     # 加载 model + running_mean_std + sa_mean_std
+agent.set_eval()
+obs_dict = agent.env.reset()
+while True:
+    input_dict = {
+        'obs':          agent.running_mean_std(obs_dict['obs']),
+        'proprio_hist': agent.sa_mean_std(obs_dict['proprio_hist'].detach()),
+    }
+    mu = agent.model.act_inference(input_dict)   # 取均值，不采样（第 03 章）
+    obs_dict, _, _, _ = agent.env.step(mu)</code></pre>
+
+<h3 id="warmup">先抓稳：warm-up 抓取轨迹</h3>
+<p>策略只会"转"，不会"从零抓起"。所以部署前先回放一段预录抓取轨迹，<strong>边合拢边看触觉力，一旦指尖感到接触就停</strong>，把这个抓握姿态作为策略的起手式：</p>
+<span class="code-cap">sharpa_wave_deploy_env.py · _reset_idx（warm-up）</span>
+<pre><code class="lang-py">traj = np.load('cache/deploy_init_traj.npy')
+while torch.max(tactile_force) < 1 and j + 3 < len(traj):
+    j += 1; self.hand.set_joint_position(traj[j]); time.sleep(0.03)
+    tactile_force, _ = self.get_tactile_info()      # 抓到（力>1）就停
+self.prev_targets = dof_sharpa2isaaclab(traj[j+2])  # 以此为策略起点</code></pre>
+
+<h3 id="statemachine">键盘状态机：人始终能接管</h3>
+<div class="intuition">
+真机会伤人伤物，所以默认<strong>不自动跑</strong>，必须人按键启动，且随时能冻结或回零位。这是安全底线。
+</div>
+
+<div class="viz">
+  <div class="viz-title">部署状态机（键盘控制）</div>
+  <div class="viz-sub">点按钮模拟按键：e 启动策略 / w 冻结当前姿态 / q 回零位。高亮当前状态。真机上 Ctrl+C 会安全停手并断连。</div>
+  <div id="smDiagram"></div>
+  <div class="controls" id="smCtl"></div>
+  <div class="readout" id="smOut"></div>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · 部署关键参数（deploy cfg）</div>
+  <table>
+    <thead><tr><th>参数</th><th>值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>control_freq</td><td>20 Hz</td><td>控制节拍</td></tr>
+      <tr><td>action_scale</td><td>1/24</td><td>动作增量步长（与训练一致）</td></tr>
+      <tr><td>current_coef</td><td>0.3</td><td>电机电流系数（限力、护机、防发热）</td></tr>
+      <tr><td>speed_coef</td><td>0.5</td><td>电机速度系数</td></tr>
+      <tr><td>force_scale</td><td>1/1.5</td><td>真机触觉力 → 训练量纲</td></tr>
+      <tr><td>dof_limits_scale</td><td>0.9</td><td>关节限位收紧到 90%，留安全裕度</td></tr>
+      <tr><td>hand_side</td><td>0/1</td><td>左手 / 右手</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="checklist">九、Sim-to-Real 排错清单</h2>
+<div class="card">
+<ul style="margin:0">
+  <li><b>观测对齐</b>：每块观测的含义、量纲、顺序与训练完全一致？关节用了同一个 <code>unscale</code>？</li>
+  <li><b>归一化统计</b>：<code>running_mean_std</code> 与 <code>sa_mean_std</code> 都加载了且处于 eval？</li>
+  <li><b>关节重映射</b>：下发用 isaaclab→sharpa、读取用 sharpa→isaaclab，没搞反？</li>
+  <li><b>触觉</b>：上电标定归零？<code>force_scale</code> 把真机力对齐到了训练量纲？阈值合理？</li>
+  <li><b>动作</b>：用均值（act_inference）而非采样？增量步长 <code>action_scale</code> 与训练一致？限位收了 0.9 裕度？</li>
+  <li><b>时序</b>：控制频率与训练近似？延迟/噪声在训练时已建模？</li>
+  <li><b>安全</b>：warm-up 抓稳了再跑？键盘能冻结/回零？电流系数限了力？</li>
+</ul>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> sim-to-real 的本质是堵动力学/感知/延迟/驱动四道落差。本项目走"域随机化 + RMA"路线零样本上真机，而真正落地的细节在于把观测/动作/触觉/时序<b>逐字对齐</b>训练时的样子，再加关节重映射、warm-up 抓取与键盘安全状态机。至此，从 MDP 到真机旋转的整条链路就全部打通了。
+</div>
+
+<div class="pager">
+  <a href="10-pipeline-deploy.html"><div class="dir">← 上一章</div><div class="ttl">10 · 完整流程与代码地图</div></a>
+  <a class="next" href="12-deploy-walkthrough.html"><div class="dir">下一章 →</div><div class="ttl">12 · 部署到真机逐行精讲</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 11 章 · Sim-to-Real</footer>
+
+<script>
+/* ---------- 现实落差 & DR 覆盖 ---------- */
+(function () {
+  const cv = document.getElementById('gapCanvas');
+  const out = document.getElementById('gapOut');
+  let ctx, width = 0.45, real = 0.5;   // 训练分布半宽（围绕中心 0.5）、真机参数(0..1)
+  const center = 0.5;
+  function gauss(x, mu, s){ return Math.exp(-((x-mu)*(x-mu))/(2*s*s)); }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 30, y: 18, w: W-50, h: H-50 };
+    const X = v => box.x + v*box.w;
+    const s = Math.max(0.04, width/2.2);
+    // sim distribution (covers [center-width, center+width])
+    const pts=[]; for(let i=0;i<=240;i++){ const v=i/240; pts.push([X(v), box.y+box.h - gauss(v,center,s)*box.h*0.92]); }
+    Viz.fillCurve(ctx, pts, box.y+box.h, T.accent, 0.16);
+    Viz.plot(ctx, pts, T.accent, 2.5);
+    // coverage band
+    ctx.fillStyle=T.accent; ctx.globalAlpha=0.06; ctx.fillRect(X(center-width), box.y, X(center+width)-X(center-width), box.h); ctx.globalAlpha=1;
+    // real param line
+    const inside = real >= center-width && real <= center+width;
+    ctx.strokeStyle = inside ? T.green : T.red; ctx.lineWidth=2.5; ctx.setLineDash([6,3]);
+    ctx.beginPath(); ctx.moveTo(X(real), box.y); ctx.lineTo(X(real), box.y+box.h); ctx.stroke(); ctx.setLineDash([]);
+    Viz.dot(ctx, X(real), box.y+10, 5, inside?T.green:T.red);
+    Viz.text(ctx, '真机参数', X(real), box.y-2, inside?T.green:T.red, '12px -apple-system','center');
+    // axis
+    ctx.strokeStyle=T.faint; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(box.x,box.y+box.h); ctx.lineTo(box.x+box.w,box.y+box.h); ctx.stroke();
+    Viz.text(ctx,'轻 / 滑', box.x, box.y+box.h+16, T.faint,'11px -apple-system','left');
+    Viz.text(ctx,'物理参数（如质量·摩擦）', box.x+box.w/2, box.y+box.h+16, T.soft,'12px -apple-system','center');
+    Viz.text(ctx,'重 / 涩', box.x+box.w, box.y+box.h+16, T.faint,'11px -apple-system','right');
+    Viz.text(ctx,'仿真训练分布', X(center), pts[120][1]-8, T.accent,'12px -apple-system','center');
+    out.innerHTML = inside
+      ? `<b style="color:var(--green)">✓ 真机落在训练分布内</b> —— 策略见过这种世界，zero-shot 大概率成功。随机化宽度 = <b>${width.toFixed(2)}</b>。`
+      : `<b style="color:var(--red)">✗ 真机落在训练分布外</b> —— 策略没见过这种世界，上真机大概率失败。把"随机化宽度"调大去罩住它（但太大会让策略变保守、难训）。`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 240); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('gapCtl');
+  Viz.slider(ctl, { label:'域随机化宽度', min:0.05, max:0.5, value:0.45, oninput:v=>{width=v;draw();} });
+  Viz.slider(ctl, { label:'真机参数（换物体）', min:0.02, max:0.98, value:0.5, oninput:v=>{real=v;draw();} });
+})();
+
+/* ---------- sim↔real 观测对齐 ---------- */
+(function () {
+  const info = {
+    q:['归一化关节角 (22)','仿真：joint_pos 加噪后 unscale 到 ±1。真机：固件读回角度→重映射→同一 unscale。<b>对齐点：同一归一化公式</b>。'],
+    tgt:['控制目标 (22)','仿真/真机都是上一步下发的 cur_targets。<b>对齐点：让策略知道自己刚下了什么命令</b>。'],
+    tac:['指尖触觉 (5)','仿真：接触力平滑+延迟+噪声。真机：F6 范数×force_scale+阈值。<b>对齐点：同为 5 维法向力、同量纲</b>。'],
+    cp:['接触点 (15)','5 指×3 维接触位置，默认关闭置零。<b>对齐点：占位维度两边一致</b>。'],
+  };
+  const A='#0071e3', T='#30c8c9', G='#34c759', O='#ff9f0a';
+  function box(x,y,w,label,key,fill){
+    return `<g class="obox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="46" rx="10" fill="${fill}"></rect>
+      <text x="${x+w/2}" y="${y+28}" text-anchor="middle" font-size="12.5" font-weight="600" fill="#fff">${label}</text></g>`;
+  }
+  const svg = `<svg viewBox="0 0 900 200" role="img" aria-label="观测对齐">
+    <text x="20" y="40" font-size="12" font-weight="700" fill="var(--text-soft)">单帧 64 维</text>
+    ${box(120,18,180,'关节角 ×22','q',A)}
+    ${box(310,18,180,'控制目标 ×22','tgt',A)}
+    ${box(500,18,130,'触觉 ×5','tac',O)}
+    ${box(640,18,150,'接触点 ×15','cp',T)}
+    <text x="20" y="120" font-size="12" font-weight="700" fill="var(--accent)">仿真来源</text>
+    <text x="20" y="160" font-size="12" font-weight="700" fill="var(--green)">真机来源</text>
+    <rect x="120" y="100" width="670" height="2" fill="var(--border)"></rect>
+    <text x="455" y="120" font-size="12.5" text-anchor="middle" fill="var(--text-soft)">物理引擎精确状态 + 显式噪声/延迟</text>
+    <text x="455" y="160" font-size="12.5" text-anchor="middle" fill="var(--text-soft)">编码器 + 触觉模组 + 重映射 + 标定</text>
+    <text x="455" y="190" font-size="12" text-anchor="middle" fill="var(--text-faint)">→ 同一含义、同一量纲、同一位置 = 对齐</text>
+  </svg>`;
+  const host = document.getElementById('alignDiagram'); host.innerHTML = svg;
+  const out = document.getElementById('alignOut');
+  host.querySelectorAll('.obox').forEach(g=>{
+    g.addEventListener('click', ()=>{ const d=info[g.dataset.k]; if(d) out.innerHTML='<b>'+d[0]+'。</b> '+d[1]; });
+  });
+})();
+
+/* ---------- 关节重映射 ---------- */
+(function () {
+  const cv = document.getElementById('remapCanvas');
+  const out = document.getElementById('remapOut');
+  const MAP = [4,9,14,19,21,0,5,10,15,1,6,11,16,3,8,13,18,2,7,12,17,20]; // isaaclab2sharpa
+  const N = MAP.length;
+  let ctx, hoverL = -1, hoverR = -1;
+  function layout(){ const H=cv._cssH, top=24, bot=H-12; const rowH=(bot-top)/(N-1); return {top, rowH}; }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const {top, rowH} = layout();
+    const lx = 60, rx = W-60;
+    Viz.text(ctx,'IsaacLab 序', lx, 14, T.accent,'12px -apple-system','center');
+    Viz.text(ctx,'SharpaWave 序', rx, 14, T.green,'12px -apple-system','center');
+    // edges
+    for(let i=0;i<N;i++){
+      const yL = top + i*rowH, yR = top + MAP[i]*rowH;
+      const hot = (hoverL===i)||(hoverR===MAP[i]);
+      ctx.strokeStyle = hot ? T.orange : T.grid;
+      ctx.lineWidth = hot ? 2.5 : 1; ctx.globalAlpha = hot?1:0.5;
+      ctx.beginPath(); ctx.moveTo(lx+18, yL); ctx.bezierCurveTo((lx+rx)/2, yL, (lx+rx)/2, yR, rx-18, yR); ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+    // nodes
+    for(let i=0;i<N;i++){
+      const yL=top+i*rowH; const hotL=(hoverL===i)||(MAP[hoverR? hoverR:-1]===i)|| (hoverR>=0 && MAP[i]===hoverR && hoverL<0 && false);
+      ctx.fillStyle = (hoverL===i)?T.orange:T.accent; Viz.dot(ctx, lx, yL, 4, ctx.fillStyle);
+      Viz.text(ctx, i.toString(), lx-12, yL+4, T.faint,'10px monospace','right');
+    }
+    for(let j=0;j<N;j++){
+      const yR=top+j*rowH; ctx.fillStyle=(hoverR===j)?T.orange:T.green; Viz.dot(ctx, rx, yR, 4, ctx.fillStyle);
+      Viz.text(ctx, j.toString(), rx+12, yR+4, T.faint,'10px monospace','left');
+    }
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 430); draw(); }
+  Viz.onRedraw(init);
+  cv.addEventListener('mousemove', e=>{
+    const r=cv.getBoundingClientRect(); const x=e.clientX-r.left, y=e.clientY-r.top;
+    const {top,rowH}=layout(); const idx=Math.round((y-top)/rowH);
+    hoverL=hoverR=-1;
+    if(idx>=0&&idx<N){ if(x < cv._cssW/2){ hoverL=idx; out.innerHTML=`IsaacLab 关节 <b>${idx}</b> → SharpaWave 关节 <b>${MAP[idx]}</b>。下发指令时这样翻译。`; } else { hoverR=idx; const src=MAP.indexOf(idx); out.innerHTML=`SharpaWave 关节 <b>${idx}</b> ← IsaacLab 关节 <b>${src}</b>。读回状态时反向翻译。`; } }
+    draw();
+  });
+  cv.addEventListener('mouseleave', ()=>{ hoverL=hoverR=-1; out.innerHTML='悬停左/右任意关节，看它映射到对面哪个位置。'; draw(); });
+})();
+
+/* ---------- 部署状态机 ---------- */
+(function () {
+  let state = 'home';
+  const meta = {
+    home:  ['回零位 (q)', 'var(--text-faint)', '手回到全 0 位、静止。安全初始态。按 e 启动策略。'],
+    run:   ['运行策略 (e)', 'var(--green)', '学生策略在线推理、驱动手指旋转物体。按 w 冻结、按 q 回零。'],
+    freeze:['冻结 (w)', 'var(--orange)', '锁住当前关节角不动。便于观察或临时叫停。按 e 继续、按 q 回零。'],
+  };
+  function bx(x,y,key,active){
+    const m=meta[key]; const op=active?1:0.35;
+    return `<g opacity="${op}"><rect x="${x}" y="${y}" width="150" height="56" rx="14" fill="${m[1]}"></rect>
+      <text x="${x+75}" y="${y+33}" text-anchor="middle" font-size="14" font-weight="600" fill="#fff">${m[0]}</text></g>`;
+  }
+  function render(){
+    const svg = `<svg viewBox="0 0 640 170" role="img" aria-label="部署状态机">
+      ${bx(40,60,'home',state==='home')}
+      ${bx(245,20,'run',state==='run')}
+      ${bx(245,110,'freeze',state==='freeze')}
+      <path d="M190,80 L243,45" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh)"></path>
+      <text x="205" y="52" font-size="12" fill="var(--green)">e</text>
+      <path d="M320,76 L320,108" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh)"></path>
+      <text x="326" y="96" font-size="12" fill="var(--orange)">w</text>
+      <path d="M300,108 L300,78" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh)"></path>
+      <text x="276" y="96" font-size="12" fill="var(--green)">e</text>
+      <path d="M250,130 C150,150 120,120 110,118" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#sh)"></path>
+      <text x="180" y="150" font-size="12" fill="var(--text-faint)">q</text>
+      <path d="M395,48 C470,40 470,120 250,128" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#sh)" opacity="0.5"></path>
+      <defs><marker id="sh" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path></marker></defs>
+    </svg>`;
+    document.getElementById('smDiagram').innerHTML = svg;
+    document.getElementById('smOut').innerHTML = '<b>'+meta[state][0]+'。</b> '+meta[state][2];
+  }
+  const ctl = document.getElementById('smCtl');
+  Viz.button(ctl, 'e · 启动', ()=>{ state='run'; render(); });
+  Viz.button(ctl, 'w · 冻结', ()=>{ state='freeze'; render(); }, true);
+  Viz.button(ctl, 'q · 回零', ()=>{ state='home'; render(); }, true);
+  render();
+})();
+</script>
+</body>
+</html>

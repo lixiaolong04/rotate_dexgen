@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>07 · TConv 与 ActorCritic 网络结构</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 07 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 07 · 钻进网络内部</div>
+  <h1>TConv 与 ActorCritic 网络结构</h1>
+  <p class="sub">一维时序卷积怎么把 30 帧历史"嚼"成 8 个数？以及教师-学生共用的那张网到底长什么样。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>代码详解。</b> <code>ActorCritic</code> 与 <code>ProprioAdaptTConv</code> 源码走读见 Part B <a href="21-networks-padapt.html">第 21 章</a>。</div>
+
+<h2 id="why-conv">一、为什么用"时序卷积"读历史</h2>
+<div class="intuition">
+30 帧历史像一段 30 秒的小视频。要从中看出"这个东西重不重、滑不滑"，关键是<strong>动态模式</strong>——比如"我一推它就晃，说明轻"。<br>
+一维卷积就是一个"<strong>滑动的小窗口</strong>"：它每次盯着相邻几帧，提取一个局部特征，然后滑过整段历史。它天然擅长捕捉这种<strong>随时间变化的局部规律</strong>，且参数比"把 30 帧拍平喂给大 MLP"少得多。
+</div>
+
+<h2 id="conv1d">二、一维卷积的数学定义</h2>
+<p>给定输入序列 $x$（$C_{\text{in}}$ 个通道、长度 $L$）和卷积核 $W$，输出第 $c$ 通道、第 $t$ 个位置为：</p>
+<div class="math-block">
+$$y[c,\,t] \;=\; b_c \;+\; \sum_{c'=1}^{C_{\text{in}}}\;\sum_{k=0}^{K-1}
+W[c,\,c',\,k]\;\cdot\; x[c',\; t\cdot s + k].$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · 一维卷积</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$K$</td><td>卷积核长度（kernel size）。本项目三层分别为 9、5、5。</td></tr>
+      <tr><td class="sym-col">$s$</td><td>步幅（stride），窗口每次滑动几格。第一层 s=2，后两层 s=1。</td></tr>
+      <tr><td class="sym-col">$C_{\text{in}},C_{\text{out}}$</td><td>输入/输出通道数。这里两者都 = 单帧维度（62）。</td></tr>
+      <tr><td class="sym-col">$b_c$</td><td>第 $c$ 个输出通道的偏置。</td></tr>
+      <tr><td class="sym-col">$W[c,c',k]$</td><td>可学习权重：把"输入通道 $c'$ 在窗口内第 $k$ 帧"映射到"输出通道 $c$"。</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>输出长度由这个公式决定（无 padding）：</p>
+<div class="math-block">
+$$L_{\text{out}} \;=\; \left\lfloor \frac{L_{\text{in}} - K}{s} \right\rfloor + 1.$$
+</div>
+
+<h2 id="tconv-arch">三、ProprioAdaptTConv 逐层拆解</h2>
+<span class="code-cap">models.py · ProprioAdaptTConv</span>
+<pre><code class="lang-py">self.channel_transform = nn.Sequential(           # 逐帧 MLP（不混时间）
+    nn.Linear(frame_shape, frame_shape), nn.ReLU(),
+    nn.Linear(frame_shape, frame_shape), nn.ReLU())
+self.temporal_aggregation = nn.Sequential(        # 三层时序卷积（混时间）
+    nn.Conv1d(frame_shape, frame_shape, (9,), stride=(2,)), nn.ReLU(),
+    nn.Conv1d(frame_shape, frame_shape, (5,), stride=(1,)), nn.ReLU(),
+    nn.Conv1d(frame_shape, frame_shape, (5,), stride=(1,)), nn.ReLU())
+self.low_dim_proj = nn.Linear(frame_shape * 3, 8) # 拍平 → 8 维隐变量
+
+def forward(self, x):                 # x: (N, 30, frame_shape)
+    x = self.channel_transform(x)     # (N, 30, frame_shape)
+    x = x.permute((0, 2, 1))          # (N, frame_shape, 30)  把"时间"放到卷积维
+    x = self.temporal_aggregation(x)  # (N, frame_shape, 3)
+    x = self.low_dim_proj(x.flatten(1))  # (N, 8)
+    return x</code></pre>
+
+<p>关键的<strong>维度演变</strong>（frame_shape = 观测维 / 3 = 186 / 3 = 62）：</p>
+<table>
+  <thead><tr><th>步骤</th><th>张量形状 (通道 × 时间长度)</th><th>怎么算出来的</th></tr></thead>
+  <tbody>
+    <tr><td>输入历史</td><td>62 × 30</td><td>30 帧，每帧 62 维</td></tr>
+    <tr><td>逐帧 MLP 后</td><td>62 × 30</td><td>只在每帧内变换，时间长度不变</td></tr>
+    <tr><td>Conv1d(K=9, s=2)</td><td>62 × <b>11</b></td><td>⌊(30−9)/2⌋+1 = 10+1 = 11</td></tr>
+    <tr><td>Conv1d(K=5, s=1)</td><td>62 × <b>7</b></td><td>⌊(11−5)/1⌋+1 = 7</td></tr>
+    <tr><td>Conv1d(K=5, s=1)</td><td>62 × <b>3</b></td><td>⌊(7−5)/1⌋+1 = 3</td></tr>
+    <tr><td>拍平 + 线性投影</td><td><b>8</b></td><td>Linear(62×3=186 → 8)</td></tr>
+  </tbody>
+</table>
+<div class="note">
+<b>三步走的设计意图。</b> ① 逐帧 MLP 先把每一帧的原始信号"提纯"成更好的特征（通道变换，不碰时间）；② 三层卷积逐步把 30 帧的时间长度压到 3，同时让每个输出"看见"越来越长的历史（感受野扩大）；③ 最后拍平投影成 8 维隐变量 ẑ。整体就是"把一段动态历史，浓缩成一个对物理属性的猜测"。
+</div>
+
+<div class="viz">
+  <div class="viz-title">一维卷积滑窗动画</div>
+  <div class="viz-sub">选一层，点"播放"：上排是输入序列，黄框是当前卷积窗口，每滑一次（按 stride）在下排生成一个输出。看长度如何从 30 → 11 → 7 → 3 收缩。</div>
+  <canvas id="convCanvas"></canvas>
+  <div class="controls" id="convCtl"></div>
+  <div class="readout" id="convOut"></div>
+</div>
+
+<h2 id="actorcritic">四、ActorCritic 全貌</h2>
+<p>教师和学生<strong>共用同一张网</strong>，区别只在隐变量 z 从哪条路来（第 06 章）。整体由这几块拼成：</p>
+
+<span class="code-cap">models.py · MLP（基础积木）</span>
+<pre><code class="lang-py">class MLP(nn.Module):           # 一串 Linear + ELU
+    def __init__(self, units, input_size):
+        layers = []
+        for output_size in units:
+            layers += [nn.Linear(input_size, output_size), nn.ELU()]
+            input_size = output_size
+        self.mlp = nn.Sequential(*layers)</code></pre>
+
+<div class="viz">
+  <div class="viz-title">网络结构图（可点击）</div>
+  <div class="viz-sub">点击任意模块，下方显示它的输入/输出维度与作用。蓝＝主干，紫＝特权编码，青＝学生 TConv，绿＝输出头。</div>
+  <div id="netDiagram"></div>
+  <div class="readout" id="netOut">点一个模块看看它的维度。</div>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · 网络各模块（本项目取值）</div>
+  <table>
+    <thead><tr><th>模块</th><th>维度</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td>env_mlp（特权编码）</td><td>8 → 256 → 128 → 8</td><td>特权信息 → 隐变量 z</td></tr>
+      <tr><td>adapt_tconv（学生）</td><td>(30×62) → 8</td><td>历史 → 估计隐变量 ẑ</td></tr>
+      <tr><td>actor_mlp（主干）</td><td>194 → 512 → 256 → 128</td><td>[obs 186 ∥ z 8]=194 → 特征</td></tr>
+      <tr><td>mu 头</td><td>128 → 21</td><td>动作均值</td></tr>
+      <tr><td>value 头</td><td>128 → 1</td><td>状态价值（Critic）</td></tr>
+      <tr><td>sigma</td><td>21（全局参数）</td><td>探索标准差（第 03 章）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="init">五、参数初始化的小心思</h3>
+<span class="code-cap">models.py · ActorCritic.__init__</span>
+<pre><code class="lang-py">for m in self.modules():
+    if isinstance(m, nn.Conv1d):
+        fan_out = m.kernel_size[0] * m.out_channels
+        m.weight.data.normal_(mean=0.0, std=np.sqrt(2.0 / fan_out))  # He 初始化（配 ReLU）
+        if m.bias is not None: nn.init.zeros_(m.bias)
+    if isinstance(m, nn.Linear):
+        if m.bias is not None: nn.init.zeros_(m.bias)
+nn.init.constant_(self.sigma, 0)    # logσ=0 → σ=1，初始充分探索</code></pre>
+<ul>
+  <li><strong>卷积用 He（Kaiming）初始化</strong> $\mathcal N(0,\, 2/\text{fan\_out})$：方差里的因子 2 专为 ReLU 设计（ReLU 砍掉一半激活，乘 2 补偿），让信号在深层不爆炸也不消失。</li>
+  <li><strong>偏置全置零</strong>：标准做法，避免初始偏好。</li>
+  <li><strong>$\sigma$ 初始化为 0</strong>（即 $\log\sigma=0,\ \sigma=1$）：训练初期探索拉满。</li>
+</ul>
+
+<div class="tip">
+<b>本章小结。</b> TConv 用三层一维卷积把 30 帧历史按 ⌊(L−K)/s⌋+1 逐步压成 62×3，再投影到 8 维 ẑ。Actor-Critic 由 MLP 积木搭成：主干吃 [obs∥z]=194 维，分出 mu(21) 与 value(1) 两个头，σ 是全局参数。卷积用 He 初始化配 ReLU。接下来两章是两个重要的"配角"：在线归一化与域随机化。
+</div>
+
+<div class="pager">
+  <a href="06-rma-distillation.html"><div class="dir">← 上一章</div><div class="ttl">06 · RMA / ProprioAdapt 蒸馏</div></a>
+  <a class="next" href="08-normalization.html"><div class="dir">下一章 →</div><div class="ttl">08 · RunningMeanStd 在线归一化</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 07 章</footer>
+
+<script>
+/* ---------- 一维卷积滑窗动画 ---------- */
+(function () {
+  const cv = document.getElementById('convCanvas');
+  const out = document.getElementById('convOut');
+  const layers = [
+    { name:'Conv1d ① (K=9, s=2)', L:30, K:9, s:2 },
+    { name:'Conv1d ② (K=5, s=1)', L:11, K:5, s:1 },
+    { name:'Conv1d ③ (K=5, s=1)', L:7,  K:5, s:1 },
+  ];
+  let ctx, li = 0, pos = 0, timer = null;
+  function outLen(l){ return Math.floor((l.L - l.K)/l.s) + 1; }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const L = layers[li], Lo = outLen(L);
+    const pad = 24, top = 46, cellH = 26;
+    const cellW = (W - 2*pad) / Math.max(L.L, 30);
+    // input row
+    Viz.text(ctx, '输入长度 '+L.L, pad, top-10, T.soft, '13px -apple-system','left');
+    for (let i=0;i<L.L;i++){
+      const x = pad + i*cellW;
+      ctx.fillStyle = T.sunken; ctx.strokeStyle = T.grid; ctx.lineWidth=1;
+      Viz.roundRect(ctx, x+1, top, cellW-2, cellH, 4); ctx.fill(); ctx.stroke();
+    }
+    // kernel window at pos
+    const startMax = L.L - L.K;
+    const start = Math.min(pos*L.s, startMax);
+    ctx.strokeStyle = T.orange; ctx.lineWidth=2.5;
+    Viz.roundRect(ctx, pad + start*cellW, top-3, L.K*cellW, cellH+6, 5); ctx.stroke();
+    ctx.fillStyle = T.orange; ctx.globalAlpha=0.12; ctx.fill(); ctx.globalAlpha=1;
+    // output row
+    const oy = top + 80;
+    Viz.text(ctx, '输出长度 '+Lo, pad, oy-10, T.soft, '13px -apple-system','left');
+    for (let i=0;i<Lo;i++){
+      const x = pad + i*cellW;
+      const done = i <= pos;
+      ctx.fillStyle = done ? T.teal : T.sunken;
+      ctx.strokeStyle = T.grid; ctx.lineWidth=1; ctx.globalAlpha = done?0.92:1;
+      Viz.roundRect(ctx, x+1, oy, cellW-2, cellH, 4); ctx.fill(); ctx.stroke(); ctx.globalAlpha=1;
+    }
+    // connector
+    const curOut = Math.min(pos, Lo-1);
+    ctx.strokeStyle = T.orange; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(pad + (start+L.K/2)*cellW, top+cellH+3);
+    ctx.lineTo(pad + (curOut+0.5)*cellW, oy);
+    ctx.stroke(); ctx.setLineDash([]);
+    out.innerHTML = `${L.name}：窗口（黄框，宽=${L.K}）当前覆盖输入第 <b>${start+1}~${start+L.K}</b> 帧，按 stride=${L.s} 滑动，生成第 <b>${curOut+1}</b> 个输出。共 <b>${Lo}</b> 个输出 = ⌊(${L.L}−${L.K})/${L.s}⌋+1。`;
+  }
+  function play(){ stop(); timer = setInterval(()=>{ pos++; if (pos >= outLen(layers[li])) { pos = outLen(layers[li])-1; stop(); } draw(); }, 420); }
+  function stop(){ if(timer){ clearInterval(timer); timer=null; } }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 180); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('convCtl');
+  layers.forEach((l,i)=> Viz.button(ctl, '第'+(i+1)+'层', ()=>{ li=i; pos=0; stop(); draw(); }, i!==0));
+  Viz.button(ctl, '▶ 播放', play);
+  Viz.button(ctl, '⏮ 复位', ()=>{ pos=0; stop(); draw(); }, true);
+})();
+
+/* ---------- 可点击网络结构图 ---------- */
+(function () {
+  const info = {
+    priv:['特权信息 priv_info', '维度 8。仅训练时可得：物体相对位移(3)、摩擦(1)、质量(1)、质心(3)。'],
+    env:['env_mlp 特权编码器', '8 → 256 → 128 → 8（ELU）。把特权信息压成隐变量 z。仅教师用。'],
+    z:['隐变量 z / ẑ', '维度 8。教师由 env_mlp 给真值 z；学生由 TConv 给估计 ẑ。tanh 收到 (−1,1)。'],
+    hist:['proprio_hist 历史', '形状 30 × 62。最近 30 帧本体观测，喂给学生 TConv。'],
+    tconv:['adapt_tconv（学生）', '(30×62) → 三层 Conv1d → 62×3 → Linear → 8。仅 Stage 2 训练。'],
+    obs:['本体观测 obs', '维度 186 = 单帧 62 × 3 帧。真机仿真都有。'],
+    actor:['actor_mlp 主干', '输入 194 = obs 186 ∥ z 8 → 512 → 256 → 128（ELU）。'],
+    mu:['mu 头', '128 → 21。输出 21 维动作均值。'],
+    val:['value 头', '128 → 1。Critic 估计状态价值，PPO 用。'],
+  };
+  const A='#0071e3', P='#af52de', T='#30c8c9', G='#34c759';
+  function box(x,y,w,h,label,key,fill){
+    return `<g class="nbox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="11" fill="${fill}"></rect>
+      <text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" font-size="13" font-weight="600" fill="#fff">${label}</text></g>`;
+  }
+  function ar(x1,y1,x2,y2){ return `<path d="M${x1},${y1} L${x2},${y2}" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#nh)"></path>`; }
+  const svg = `<svg viewBox="0 0 900 340" role="img" aria-label="网络结构图">
+    <defs><marker id="nh" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path></marker></defs>
+    ${box(20,30,150,48,'priv_info (8)','priv',P)}
+    ${box(20,130,150,48,'proprio_hist (30×62)','hist',A)}
+    ${box(20,240,150,48,'obs (186)','obs',A)}
+    ${box(210,30,120,48,'env_mlp','env',P)}
+    ${box(210,130,120,48,'adapt_tconv','tconv',T)}
+    ${box(370,80,110,48,'z / ẑ (8)','z',P)}
+    ${box(530,150,140,48,'actor_mlp (194→128)','actor',A)}
+    ${box(720,90,150,48,'mu 头 → 21','mu',G)}
+    ${box(720,210,150,48,'value 头 → 1','val',G)}
+    ${ar(170,54,208,54)}
+    ${ar(170,154,208,154)}
+    ${ar(330,54,400,82)}
+    ${ar(330,154,400,110)}
+    ${ar(480,104,560,150)}
+    ${ar(170,264,560,180)}
+    ${ar(670,170,718,120)}
+    ${ar(670,180,718,230)}
+  </svg>`;
+  const host = document.getElementById('netDiagram'); host.innerHTML = svg;
+  const out = document.getElementById('netOut');
+  host.querySelectorAll('.nbox').forEach(g=>{
+    g.addEventListener('click', ()=>{ const d=info[g.dataset.k]; if(d) out.innerHTML = '<b>'+d[0]+'。</b> '+d[1]; });
+  });
+})();
+</script>
+</body>
+</html>

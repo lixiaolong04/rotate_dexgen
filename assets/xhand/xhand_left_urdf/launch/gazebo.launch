@@ -1,0 +1,23 @@
+<launch>
+  <!-- 启动Gazebo -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="paused" value="true"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="headless" value="false"/>
+  </include>
+
+  <!-- 加载URDF到参数服务器 -->
+  <param name="robot_description" textfile="$(find xhand_left)/urdf/xhand_left.urdf" />
+
+  <!-- 在Gazebo中生成模型 -->
+  <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model" 
+        args="-param robot_description -urdf -model rel3 -x 0 -y 0 -z 1.0" />
+
+
+  <!-- convert joint states to TF transforms for rviz, etc -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"
+	respawn="false" output="screen">
+  </node>
+
+</launch>

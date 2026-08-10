@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>16 · xhand_wave_env 生命周期</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 16 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 16 · 环境核心</div>
+  <h1><code>xhand_wave_env.py</code> 生命周期逐行导读</h1>
+  <p class="sub">读完本章，你能回答：IsaacLab <code>DirectRLEnv</code> 一步 control step 里，哪些回调按什么顺序被调用？<code>__init__</code> 里预分配了哪些 buffer？重置时抓取缓存怎么采样？——即使你是第一次看 Python RL 代码，也能跟着「游戏循环」类比走完全程。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>前置阅读。</b> 第 <a href="02-env-reward.html">02 章</a> 讲了 MDP 直觉；第 <a href="15-config-system.html">15 章</a> 讲了 <code>xhand_wave_env_cfg.py</code> 怎么被 Hydra 加载。本章聚焦<strong>环境类本身</strong>——<code>rl_isaaclab/tasks/inhand_rotate/xhand_wave_env.py</code> 里的 <code>XhandWaveInhandRotateEnv</code>。</div>
+
+<div class="glossary">
+  <h4>📖 本章术语速查（先扫一眼，后面会反复用到）</h4>
+  <dl>
+    <dt>DirectRLEnv</dt>
+    <dd>IsaacLab 的「直接 RL 环境」基类。奖励、观测、终止条件都在子类里手写 Python，不走 Manager 配置表。本项目的环境类继承它。</dd>
+    <dt>control step（控制步）</dt>
+    <dd>策略每 0.05 秒（20 Hz）调用一次 <code>env.step(action)</code>。内部会跑 <code>decimation=12</code> 次物理子步（240 Hz），才凑成这一拍。</dd>
+    <dt>buffer（缓冲区）</dt>
+    <dd>在 GPU 上预先分配好的张量，用来存「上一步关节角」「物体位置」等。训练时反复读写，避免每步 <code>malloc</code> 拖慢仿真。</dd>
+    <dt>hook（钩子函数）</dt>
+    <dd>父类在固定时机调用的子类方法，如 <code>_pre_physics_step</code>、<code>_get_rewards</code>。你只实现钩子，不 override <code>step()</code> 本身。</dd>
+    <dt>num_envs</dt>
+    <dd>并行仿真的环境个数。RTX 5070 Ti 12GB 建议从 10 起步；每个 env 是网格里独立的一格，有自己的 <code>env_origins</code> 偏移。</dd>
+    <dt>decimation</dt>
+    <dd>一个控制步里物理引擎跑几次。cfg 默认 12：策略说一次「动」，仿真内部算 12 次碰撞和接触。</dd>
+    <dt>grasp cache</dt>
+    <dd>预生成的「已成功抓住」起手姿态，存成 <code>.npy</code>。reset 时随机抽一行，让 episode 从「已握笔」开始（详见<a href="18-grasp-cache.html">18 章</a>）。</dd>
+    <dt>域随机化（DR）</dt>
+    <dd>启动或 reset 时随机改摩擦、质量、PD 增益等，让策略见过更多「假世界」，部署到真机更稳（<a href="09-domain-randomization.html">09 章</a>）。</dd>
+  </dl>
+</div>
+
+<h2 id="game-loop">零、把 DirectRLEnv 想成游戏主循环</h2>
+<div class="intuition">
+如果你玩过《塞尔达》或任何 3D 动作游戏，<code>DirectRLEnv</code> 就是<strong>游戏引擎的主循环</strong>，只不过「玩家」换成了 PPO 神经网络：
+
+<ul>
+  <li><strong>加载关卡</strong> = <code>__init__</code> + <code>_setup_scene</code>（搭手、圆柱、地面、复制 num_envs 份）</li>
+  <li><strong>读手柄输入</strong> = <code>step(action)</code> 收到 21 维动作向量</li>
+  <li><strong>处理输入</strong> = <code>_pre_physics_step</code>（裁剪动作 → 算关节目标位）</li>
+  <li><strong>物理演算 ×12</strong> = Isaac Sim 内部碰撞、接触、重力（玩家看不见，但手指真的在推物体）</li>
+  <li><strong>驱动物体</strong> = <code>_apply_action</code>（PD 力矩写进电机）</li>
+  <li><strong>读传感器</strong> = <code>_get_observations</code>（关节角、触觉力 → 186 维向量）</li>
+  <li><strong>算分数</strong> = <code>_get_rewards</code>（转得快加分、乱晃扣分）</li>
+  <li><strong>判断 Game Over</strong> = <code>_get_dones</code>（物体掉了？时间到了？）</li>
+  <li><strong>重开一局</strong> = <code>_reset_idx</code>（从抓取缓存抽新手势）</li>
+</ul>
+PPO 从不直接调用 Isaac API——它只跟「车间主任」<code>XhandWaveInhandRotateEnv</code> 对话。主任内部再跟仿真引擎打交道。
+</div>
+
+<div class="ask-box">
+  <b>Q：为什么不自己写 <code>step()</code>，只靠这些钩子？</b><br>
+  A：IsaacLab 父类已经写好了「物理子步循环 + 计时 + episode 计数 + 自动 reset」的样板代码。子类只填「这一步具体算什么奖励、什么观测」，避免每个任务重复造轮子。改顺序或漏调某个钩子，训练会 silently 跑偏——所以本章把时间线画清楚。
+</div>
+
+<h2 id="class">一、类在仓库里的位置</h2>
+<div class="intuition">
+把环境想成「仿真车间主任」：他负责搭场景（手 + 圆柱 + 地面）、每步收动作、驱动物理、读传感器、算奖励、判断要不要重开一局。PPO 只跟他打交道，不直接碰 Isaac Sim API。
+</div>
+
+<span class="code-cap">gym 注册 · tasks/inhand_rotate/__init__.py</span>
+<pre><code class="lang-py">gym.register(
+    id="Isaac-Inhand-Rotate-Xhand-Wave-v0",
+    entry_point="rl_isaaclab.tasks.inhand_rotate.xhand_wave_env:XhandWaveInhandRotateEnv",
+    ...
+)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · gym.register</div>
+  <table>
+    <tbody>
+      <tr><td>gym.register(...)</td><td>在 Gymnasium 任务目录里登记一个新游戏 ID，像 Steam 上架一款游戏。</td></tr>
+      <tr><td>id="Isaac-Inhand-Rotate-Xhand-Wave-v0"</td><td>游戏在商店里的名字；<code>train.py --task</code> 就填这个字符串。</td></tr>
+      <tr><td>entry_point="...XhandWaveInhandRotateEnv"</td><td>点「开始游戏」时实例化的 Python 类——本章主角。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><code>gym.make(...)</code> 最终实例化的就是本章这个类。它继承 IsaacLab 的 <code>DirectRLEnv</code>——「直接 RL 环境」：奖励、观测、终止条件都在环境类里手写，不走 Manager 配置表。</p>
+
+<h2 id="lifecycle">二、DirectRLEnv 回调顺序（一生 + 一步）</h2>
+
+<h3 id="birth">2.1 诞生：从构造到第一帧</h3>
+<p>对象创建时，IsaacLab 父类会按固定顺序调用子类钩子。对我们最重要的是：</p>
+
+<div class="symtable">
+  <div class="symtitle">生命周期时间线</div>
+  <table>
+    <thead><tr><th>阶段</th><th>调用</th><th>做什么</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">① 子类预备</td><td><code>__init__</code> 开头</td><td>分配 <code>reset_height_lower/upper</code> 零张量（须在 <code>super().__init__</code> 前，因父类会触发 reset）</td></tr>
+      <tr><td class="sym-col">② 父类构造</td><td><code>super().__init__(cfg, ...)</code></td><td>创建 SimulationContext、Scene；内部调用 <code>_setup_scene()</code>；首次 <code>_reset_idx</code></td></tr>
+      <tr><td class="sym-col">③ 子类收尾</td><td><code>__init__</code> 后半</td><td>自检、buffer、抓取缓存、域随机化、接触传感器索引</td></tr>
+      <tr><td class="sym-col">④ 训练循环</td><td>每 control step</td><td>见下图：<code>_pre_physics_step</code> → 物理 × decimation → <code>_apply_action</code> → 观测/奖励/终止</td></tr>
+      <tr><td class="sym-col">⑤ 局末</td><td><code>_reset_idx(env_ids)</code></td><td>对 done 的环境重新采样抓取姿态、随机化 PD、写回仿真</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+<b>为什么 <code>reset_height_*</code> 必须在 <code>super().__init__</code> 之前？</b> 父类构造时会立刻做一次 reset，而 reset 逻辑要往 <code>reset_height_lower[env_ids]</code> 写本局高度窗口。如果张量还不存在，Python 会 AttributeError。这是新手读代码时最容易漏掉的一行「顺序陷阱」。
+</div>
+
+<div class="viz">
+  <div class="viz-title">一步 control step 内部顺序</div>
+  <div class="viz-sub">鼠标悬停各框可看函数名。decimation=12 时，中间「physics」会跑 12 次仿真子步（240 Hz），才凑成一个 20 Hz 控制步。</div>
+  <div id="envSeq"></div>
+</div>
+
+<p>注意：<code>step(action)</code> 的入口在父类 <code>DirectRLEnv</code>。子类<strong>不 override step</strong>，只实现下面六个钩子（加上 <code>_setup_scene</code> 和 <code>_reset_idx</code>）：</p>
+
+<ol>
+  <li><code>_pre_physics_step(actions)</code> — 裁剪动作、算目标位、可选外力扰动</li>
+  <li>物理引擎 × <code>decimation</code>（cfg 里 = 12）</li>
+  <li><code>_apply_action()</code> — PD 力矩或位置目标写入仿真</li>
+  <li><code>_get_observations()</code> — 拼 186 维 policy obs + priv_info + proprio_hist</li>
+  <li><code>_get_rewards()</code> — 六项奖励（详见<a href="17-obs-reward-code.html">第 17 章</a>）</li>
+  <li><code>_get_dones()</code> — 高度终止 + 超时 + 重力课程</li>
+</ol>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 一步 step 像打游戏的一帧</div>
+  <table>
+    <tbody>
+      <tr><td>PPO 输出 action</td><td>神经网络说：「拇指关节再弯 0.04 rad」——21 个关节各给一个 [-1,1] 的小数。</td></tr>
+      <tr><td>_pre_physics_step</td><td>把「再弯一点」叠到上一步目标上，得到本步绝对目标角；顺便记下物体上一帧位姿（后面算速度用）。</td></tr>
+      <tr><td>physics × 12</td><td>仿真器默默算 12 次：手指推物体、物体反推手指、摩擦、重力……</td></tr>
+      <tr><td>_apply_action</td><td>读回最新关节角，用 PD 公式算力矩，命令电机去追目标角。</td></tr>
+      <tr><td>_get_observations</td><td>打包「最近 3 帧」传感器读数成 186 维，交给 PPO 下一拍决策。</td></tr>
+      <tr><td>_get_rewards</td><td>物体绕目标轴转得快 → 正分；滑走了、力矩太大 → 扣分。</td></tr>
+      <tr><td>_get_dones</td><td>物体高度跑出 4 cm 窗口 → 本局结束；或 20 秒到了 → 超时结束。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>Q：policy 是 20 Hz，物理是 240 Hz，为什么不让策略也 240 Hz？</b><br>
+  A：真机电机接口和通信带宽通常也是几十 Hz；更高频策略对 sim-to-real 帮助有限，却成倍吃显存和算力。decimation=12 是工程上常用的折中：物理够细、控制够省。
+</div>
+
+<h2 id="init">三、<code>__init__</code>：buffer 与启动自检</h2>
+<div class="intuition">
+<code>__init__</code> 只做两件事：<strong>验配置对不对</strong>（fail fast），<strong>预分配所有 GPU 张量</strong>（训练时避免每步 malloc）。仿真一步里反复读写的就是这些 buffer。可以把每个 buffer 想成游戏里的「常驻 UI 血条 / 小地图缓存」——开局分配好，整局反复用。
+</div>
+
+<h3 id="startup-check">3.1 Layer 1 启动自检</h3>
+<span class="code-cap">xhand_wave_env.py · __init__ · startup-check</span>
+<pre><code class="lang-py">n_joints = self.hand.num_joints
+if n_joints != cfg.action_space:          # 必须 21
+    raise RuntimeError(...)
+if len(cfg.actuated_joint_names) != cfg.action_space:
+    raise RuntimeError(...)
+for name in cfg.actuated_joint_names:
+    if name not in self.hand.joint_names:  # URDF 名对不上立刻崩
+        raise RuntimeError(...)
+if cfg.observation_space % 3 != 0:       # 186 = 62×3
+    raise RuntimeError(...)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 启动自检</div>
+  <table>
+    <tbody>
+      <tr><td>n_joints != cfg.action_space</td><td>USD 里加载的手有 21 个关节吗？cfg 说 action 也是 21 维——对不上说明 URDF 换过但 cfg 没改。</td></tr>
+      <tr><td>actuated_joint_names 逐个检查</td><td>配置里写的关节名字，在 URDF 里真的存在吗？拼写差一个字母，训练一万步才发现就晚了。</td></tr>
+      <tr><td>observation_space % 3 != 0</td><td>186 维 = 62 维单帧 × 3 帧历史。不能被 3 整除说明 cfg 写错了，后面 reshape 会炸。</td></tr>
+      <tr><td>raise RuntimeError</td><td>故意「开局就崩」：宁可 0 步训练失败，也不要 silently 用错维度训到收敛。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>这些检查在 <code>super().__init__</code><strong>之后</strong>跑，因为那时 <code>self.hand</code> 已从 USD 加载完毕。URDF 关节名和 cfg 列表不一致时，训练跑一万步才发现就太晚了。</p>
+
+<h3 id="buffers">3.2 核心 buffer 逐个认识：「这个变量就像……」</h3>
+<p>下面不只列 shape，还用生活类比帮你建立肌肉记忆。所有张量都在 GPU（<code>device=self.device</code>）上，shape 第一维永远是 <code>num_envs</code>。</p>
+
+<div class="symtable">
+  <div class="symtitle">__init__ 预分配张量（完整版）</div>
+  <table>
+    <thead><tr><th>属性</th><th>shape</th><th>用途</th><th>白话类比</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>reset_height_lower</code> / <code>upper</code></td><td>(num_envs,)</td><td>本局物体 z 允许范围的下/上界</td><td>像给毽子画的「安全高度带」——超出就判出局</td></tr>
+      <tr><td class="sym-col"><code>prev_targets</code> / <code>cur_targets</code></td><td>(num_envs, 21)</td><td>上一步 vs 本步关节目标角（增量动作）</td><td>像 GPS「上一导航点」和「这一导航点」；动作是两点之间的增量</td></tr>
+      <tr><td class="sym-col"><code>object_pos</code> / <code>object_rot</code></td><td>(N,3) / (N,4)</td><td>物体位姿（env 局部坐标）</td><td>圆柱在手掌坐标系里的「现在在哪、朝哪」</td></tr>
+      <tr><td class="sym-col"><code>object_pos_prev</code> / <code>rot_prev</code></td><td>(N,3) / (N,4)</td><td>上一控制步物体位姿</td><td>像行车记录仪的「上一帧截图」，用来算「转多快 / 滑多快」</td></tr>
+      <tr><td class="sym-col"><code>object_default_pose</code></td><td>(N, 7)</td><td>本局 reset 时的物体初始位姿</td><td>本关「出生点」；奖励里会惩罚离出生点太远</td></tr>
+      <tr><td class="sym-col"><code>rb_forces</code></td><td>(N, 3)</td><td>外力扰动向量</td><td>像有人随机推一下物体——逼策略练抗干扰</td></tr>
+      <tr><td class="sym-col"><code>obs_buf_lag_history</code></td><td>(N, 80, 62)</td><td>最长 80 帧滑动窗口</td><td>像 80 格胶片条；策略只取最后 3 格拼成 186 维</td></tr>
+      <tr><td class="sym-col"><code>proprio_hist_buf</code></td><td>(N, 30, 62)</td><td>最近 30 帧本体历史</td><td>给 TConv 学生的「30 秒短视频」，用来猜摩擦/质量（<a href="06-rma-distillation.html">06 章</a>）</td></tr>
+      <tr><td class="sym-col"><code>priv_info_buf</code></td><td>(N, 8)</td><td>特权信息：物块偏移、摩擦、质量、质心</td><td>教师的「上帝面板」——学生部署时看不到</td></tr>
+      <tr><td class="sym-col"><code>at_reset_buf</code></td><td>(N,)</td><td>标记刚 reset 的环境</td><td>像「刚读档」旗子：下一步要把 80 帧历史全填成当前帧，避免冷启动全零</td></tr>
+      <tr><td class="sym-col"><code>last_contacts</code></td><td>(N, 5)</td><td>触觉延迟/噪声状态机</td><td>像蓝牙耳机的「上一包触觉数据」，按 0.5% 概率滞留一帧模拟延迟</td></tr>
+      <tr><td class="sym-col"><code>p_gain</code> / <code>d_gain</code></td><td>(N, 21)</td><td>PD 增益；reset 时可域随机</td><td>电机「硬度」旋钮：P 大 = 追目标更猛，D 大 = 抑制抖动</td></tr>
+      <tr><td class="sym-col"><code>scale_ids</code></td><td>(N, 1)</td><td>每个 env 分到哪个物体尺寸桶</td><td>像 8 种粗细的笔芯；env 0–9 可能用细笔，env 10–19 用粗笔</td></tr>
+      <tr><td class="sym-col"><code>saved_grasping_states</code></td><td>(总行, 28)</td><td>抓取缓存矩阵</td><td>「成功握笔姿势相册」，每行 28 个数（<a href="18-grasp-cache.html">18 章</a>）</td></tr>
+      <tr><td class="sym-col"><code>rot_axis</code></td><td>(N, 3)</td><td>期望旋转轴（单位向量）</td><td>奖励问：物体绕这根轴转得多快？默认 (0,0,1) 竖轴</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>Q：为什么 obs 历史要 80 帧，policy 却只取 3 帧？</b><br>
+  A：80 是为了给 <code>proprio_hist_buf</code>（30 帧）留够滑动空间；PPO 教师网络输入固定 186 维（62×3），是论文/部署端约定好的形状。多存的帧不会浪费——TConv 学生会读更长历史。
+</div>
+
+<h3 id="grasp-cache-init">3.3 抓取缓存加载</h3>
+<span class="code-cap">xhand_wave_env.py · __init__ · grasp_cache</span>
+<pre><code class="lang-py">scale_ids = ...  # 把 num_envs 均分给 scale_range[2] 个物体尺度
+if self.cfg.grasp_cache_path:
+    path = f"{grasp_cache_path}_{scale_range[0]}-{scale_range[1]}-{scale_range[2]}.npy"
+    self.saved_grasping_states = torch.from_numpy(np.load(path)).float().to(device)
+    self.bucket_grasp = saved.shape[0] // scale_num   # 每个 scale 桶里多少抓取姿态
+    self.bucket_env  = num_envs // scale_num          # 每个 scale 桶分配多少并行 env</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 抓取缓存加载</div>
+  <table>
+    <tbody>
+      <tr><td>scale_ids = linspace(0,7,...)</td><td>8 种物体直径（0.4–0.6 m 之间 8 档），均匀分给 num_envs 个并行环境。</td></tr>
+      <tr><td>np.load(path)</td><td>从硬盘读「相册」；例如 50000 行 × 28 列（详见<a href="18-grasp-cache.html">18 章</a>）。</td></tr>
+      <tr><td>bucket_grasp = 总行数 / 8</td><td>每个尺寸桶约 6250 种起手式；reset 时在这 6250 行里随机抽。</td></tr>
+      <tr><td>bucket_env = num_envs / 8</td><td>例如 num_envs=80 → 每个尺寸分 10 个 env；它们共享同一个 6250 行的抽样池。</td></tr>
+      <tr><td>num_envs % 8 != 0 → exit()</td><td>分桶必须整除，否则有的尺寸多一个 env、有的少一个，破坏对称性。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>缓存每行是 <code>[21 关节角 | 3 物体位置 | 4 物体四元数]</code>，共 28 维。训练前须用 <code>gen_grasp.py</code> 生成（<a href="18-grasp-cache.html">18 章</a>）。</p>
+
+<h3 id="dr-init">3.4 启动时域随机化（一次性）</h3>
+<p>摩擦、质心、质量在<strong>环境创建时</strong>对每个并行 env 采样一次，写入 <code>priv_info_buf</code> 对应槽位：</p>
+<ul>
+  <li><code>priv_info_buf[:, 3]</code> ← 摩擦缩放系数（例如 0.8–1.2 之间随机）</li>
+  <li><code>priv_info_buf[:, 4]</code> ← 物体质量（例如 0.05–0.15 kg）</li>
+  <li><code>priv_info_buf[:, 5:8]</code> ← 质心偏移（mm 级随机）</li>
+</ul>
+
+<div class="intuition">
+域随机化像「开局给每个平行宇宙设不同物理法则」：env #3 的笔更滑、更重、质心偏一点；env #7 的笔更涩。教师策略带着 <code>priv_info</code> 看这些参数，学会「在多种手感下都能转」。
+</div>
+
+<p>指尖弹性体摩擦通过 <code>_compute_elastomer_shape_ids()</code> 遍历 USD 碰撞 shape 索引，避免硬编码（Xhand URDF 每个 dip_link 有 4 个 collision shape）。</p>
+
+<h2 id="setup-scene">四、<code>_setup_scene</code>：搭舞台</h2>
+<span class="code-cap">xhand_wave_env.py · _setup_scene</span>
+<pre><code class="lang-py">self.hand   = Articulation(self.cfg.robot_cfg)      # Xhand USD
+self.object = RigidObject(self.cfg.object_cfg)      # 圆柱体
+spawn_ground_plane(...)
+self.scene.clone_environments(copy_from_source=False)
+self.scene.filter_collisions()
+self.scene.articulations["robot"] = self.hand
+self.scene.rigid_objects["object"] = self.object
+# 5 个指尖 ContactSensor（拇指/食/中/无/小 dip_link）
+for id in range(len(self.cfg.contact_sensor)):
+    self._contact_sensor.append(ContactSensor(self.cfg.contact_sensor[id]))
+    self.scene.sensors[f"contact_sensor_{id}"] = ...</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · _setup_scene</div>
+  <table>
+    <tbody>
+      <tr><td>Articulation(robot_cfg)</td><td>把 Xhand 的 USD 模型放进场景——像拖一个机器人进 Unity 场景。</td></tr>
+      <tr><td>RigidObject(object_cfg)</td><td>放一根可物理碰撞的圆柱「笔」。</td></tr>
+      <tr><td>spawn_ground_plane</td><td>铺地面，物体掉了有东西接（虽然 in-hand 任务很少真掉地上）。</td></tr>
+      <tr><td>clone_environments</td><td>把 env_0 复制 num_envs 份，排成网格；每份有独立原点偏移。</td></tr>
+      <tr><td>ContactSensor × 5</td><td>在五个指尖装「压力计」，只报告指尖和圆柱之间的法向力。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+<code>clone_environments</code> 把 env_0 的机器人+物体复制成 <code>num_envs</code> 份，排成网格。每个 env 有独立原点 <code>scene.env_origins</code>，但共享同一份 cfg 模板。接触传感器只过滤物体 prim，所以读到的力是「指尖↔圆柱」的法向合力。
+</div>
+
+<h2 id="control">五、<code>_pre_physics_step</code> + <code>_apply_action</code></h2>
+
+<h3 id="pre-physics">5.1 动作 → 目标位</h3>
+<span class="code-cap">xhand_wave_env.py · _pre_physics_step</span>
+<pre><code class="lang-py">actions = saturate(actions, -clip_actions, clip_actions)   # ±1
+self.actions = actions.clone()
+targets = self.prev_targets + self.cfg.action_scale * self.actions  # scale=1/24
+self.cur_targets[:, actuated_dof_indices] = saturate(
+    targets, hand_dof_lower_limits, hand_dof_upper_limits)
+self.object_pos_prev[:] = self.object_pos      # 差分用
+self.object_rot_prev[:] = self.object_rot</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 增量动作</div>
+  <table>
+    <tbody>
+      <tr><td>saturate(actions, ±1)</td><td>神经网络输出可能爆掉；裁剪到 [-1,1]，像游戏手柄死区外的限幅。</td></tr>
+      <tr><td>prev_targets + action_scale * actions</td><td>增量控制：action=+1 表示「在上一目标基础上再弯 1/24 rad」（约 2.4°）。</td></tr>
+      <tr><td>saturate(targets, 关节上下限)</td><td>手指不能弯到物理不可能的角度——撞到 URDF 限位就卡住。</td></tr>
+      <tr><td>object_pos_prev[:] = object_pos</td><td>在物理推进<strong>之前</strong>记下物体旧位置；奖励里用「新位置 − 旧位置」算速度。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>可选<strong>外力扰动</strong>（<code>force_scale &gt; 0</code>）：以概率 0.25 给物体施加随机力，带指数衰减——逼策略在「被推一下」时仍能稳住旋转。</p>
+
+<h3 id="apply-action">5.2 PD 力矩写入仿真</h3>
+<span class="code-cap">xhand_wave_env.py · _apply_action</span>
+<pre><code class="lang-py">self._refresh_lab()   # 从仿真读回关节角、速度、力矩、物体位姿
+if self.cfg.torque_control:
+    self.torques = p_gain * (cur_targets - hand_dof_pos) - d_gain * hand_dof_vel
+    self.hand.set_joint_effort_target(torques[:, actuated_dof_indices], ...)
+else:
+    self.hand.set_joint_position_target(cur_targets[:, actuated_dof_indices], ...)
+self.prev_targets[:, actuated_dof_indices] = cur_targets[:, actuated_dof_indices]</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · PD 控制</div>
+  <table>
+    <tbody>
+      <tr><td>_refresh_lab()</td><td>问仿真：「现在关节角多少？物体在哪？」抄到 self 的 buffer 里。</td></tr>
+      <tr><td>p_gain * (目标 - 当前角)</td><td>P 项：离目标越远，力矩越大——像弹簧把你拉向目标角。</td></tr>
+      <tr><td>- d_gain * 关节速度</td><td>D 项：转太快就刹车——防止手指抖成帕金森。</td></tr>
+      <tr><td>set_joint_effort_target</td><td>把算好的力矩（Nm）写给 PhysX 电机。</td></tr>
+      <tr><td>prev_targets = cur_targets</td><td>本步目标变「下一步的上一目标」——增量动作的锚点。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>cfg 默认 <code>torque_control=True</code>：动作经 PD 变成力矩，更接近真机电机接口。每步末尾把 <code>cur_targets</code> 拷进 <code>prev_targets</code>，下一步增量才正确。</p>
+
+<h2 id="reset">六、<code>_reset_idx</code>：开局采样</h2>
+<p>当某 env「掉落」或「超时」，父类会调用 <code>_reset_idx(env_ids)</code>。核心流程：</p>
+
+<div class="timeline">
+  <div class="step"><h4>① super()._reset_idx</h4><p>清 episode 计数、事件管理器默认重置</p></div>
+  <div class="step"><h4>② PD 随机化</h4><p><code>randomize_pd_gains</code> 时重采样 <code>p_gain/d_gain</code></p></div>
+  <div class="step"><h4>③ 抓取缓存采样</h4><p>每个 scale 桶内 <code>randint(0, bucket_grasp)</code> 抽一行姿态</p></div>
+  <div class="step"><h4>④ 写物体</h4><p>位置/四元数来自缓存 + <code>env_origins</code>；算本局高度上下界</p></div>
+  <div class="step"><h4>⑤ 写手部</h4><p>关节角 = 缓存前 21 维；<code>prev/cur_targets</code> 同步</p></div>
+  <div class="step"><h4>⑥ 清 buffer</h4><p><code>proprio_hist_buf=0</code>，<code>at_reset_buf=1</code>（下一步观测会填满历史）</p></div>
+</div>
+
+<span class="code-cap">xhand_wave_env.py · _reset_idx · 缓存采样</span>
+<pre><code class="lang-py">sampled_pose_idx = torch.randint(0, self.bucket_grasp, size=(self.bucket_env,))
+for i in range(self.cfg.scale_range[2]):   # 8 个物体尺度
+    saved_grasping_states_picked[i*bucket_env:(i+1)*bucket_env] = \
+        saved_grasping_states[i*bucket_grasp:(i+1)*bucket_grasp][sampled_pose_idx]
+sampled_pose = saved_grasping_states_picked[env_ids].clone()
+dof_pos = sampled_pose[:, :self.num_hand_dofs]   # 前 21 维</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · reset 采样</div>
+  <table>
+    <tbody>
+      <tr><td>torch.randint(0, bucket_grasp, ...)</td><td>每个尺寸桶抽 bucket_env 个随机行号，例如 [42, 1088, 3, ...]。</td></tr>
+      <tr><td>for i in range(8)</td><td>8 种粗细的笔各用各的 6250 行相册，互不串味。</td></tr>
+      <tr><td>sampled_pose[env_ids]</td><td>只 reset 那些「刚 Game Over」的 env，别的 env 继续转笔。</td></tr>
+      <tr><td>dof_pos = 前 21 维</td><td>把相册里的手指弯曲角度写回仿真——瞬间回到「已抓住」姿势。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>高度终止窗口随物体初始高度自适应：</p>
+<pre><code class="lang-py">reset_height_lower[env_ids] = z_init - (reset_height_upper - reset_height_lower) / 2
+reset_height_upper[env_ids] = z_init + (reset_height_upper - reset_height_lower) / 2</code></pre>
+<p>默认窗口宽 4 cm（cfg <code>0.59906 ~ 0.63906</code> 相对掌心坐标系）。物体 z 超出即 <code>height_reset=True</code>。</p>
+
+<div class="intuition">
+高度窗口像「毽子高度安全带」：开局根据物体初始 z（比如 0.62 m）上下各放宽 2 cm。物体滑低到 0.60 m 或弹飞到 0.64 m 就判失败——逼策略在掌心附近稳稳转，而不是甩飞或捏碎。
+</div>
+
+<p><code>reset_random_quat</code> 当前 cfg 为 <code>False</code>（2026-06-02 临时关闭全 SO(3) 随机朝向，避免重力课程死锁）。开启时会绕手掌中心随机旋转整手+物体，并重算 <code>rot_axis</code>。</p>
+
+<h2 id="refresh">七、<code>_refresh_lab</code>：仿真 → 张量</h2>
+<p>多个钩子开头都调 <code>_refresh_lab()</code>，把 IsaacLab asset API 的数据拷到 <code>self.hand_dof_pos</code>、<code>self.object_pos</code> 等。指尖位置会减去 <code>env_origins</code>，变成 env 局部坐标——和部署端对齐。</p>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · _refresh_lab 抄表清单</div>
+  <table>
+    <tbody>
+      <tr><td>hand_dof_pos / vel / torque</td><td>21 个关节现在的角、角速度、力矩——电机的「体检报告」。</td></tr>
+      <tr><td>object_pos = root_pos_w - env_origins</td><td>物体世界坐标减掉本 env 网格偏移 → 掌心局部坐标（部署端也用局部系）。</td></tr>
+      <tr><td>fingertip_pos</td><td>五个指尖位置，reset 高度窗和 grasp cond1 都要用。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="extras">八、<code>extras</code> 与 TensorBoard</h2>
+<p><code>_get_rewards</code> 把六项原始量、三轴角速度分量、重力分量写入 <code>self.extras</code>，wrapper 会打到 TensorBoard。调参时看 <code>rotate_reward</code> 是否上升、<code>height_reset_*</code> 是否接近 0。</p>
+
+<div class="ask-box">
+  <b>Q：训练时 reward 曲线平了，先看 extras 里哪几条？</b><br>
+  A：① <code>rotate_reward</code> 是否接近 0（可能根本没转起来）；② <code>height_reset_upper/lower</code> 是否很高（一直掉笔）；③ <code>gravity_z</code> 是否还在 −0.05（重力课程没加码说明还没学会稳握）。详见<a href="17-obs-reward-code.html#debug">17 章调试表</a>。
+</div>
+
+<h2 id="game-loop-mermaid">九、主循环一图流</h2>
+<p>把上文「游戏循环」和「一步 step」合成一张图，方便打印贴在显示器旁：</p>
+<pre><code>【训练外层】PPO 循环
+  └─ action (21,) ──► env.step(action)
+        │
+        ├─ _pre_physics_step     裁剪动作 → cur_targets
+        ├─ physics × 12        240 Hz 碰撞/接触
+        ├─ _apply_action       PD 力矩 → 仿真
+        ├─ _get_observations   → policy(186), priv(8), hist(30×62)
+        ├─ _get_rewards        → scalar reward
+        ├─ _get_dones          → 掉笔? 超时?
+        └─ _reset_idx(done)      从 .npy 抽新手势（见 18 章）
+
+【对象一生】gym.make → __init__ → _setup_scene → (循环 step) → 关闭</code></pre>
+
+<div class="intuition">
+<b>记忆口诀：</b>「前物理、十二跳、施力、三观（观测）、奖、死、(reset)」——对应 pre_physics、decimation、apply、obs、reward、done、reset。面试或读 log 时按这个顺序 grep 函数名，不会迷路。
+</div>
+
+<h2 id="faq">十、常见问题（FAQ）</h2>
+
+<div class="ask-box">
+  <b>Q：环境类和 cfg 类是什么关系？</b><br>
+  A：cfg 是「菜单」——维度、频率、奖励系数全写在那里；环境类是「厨师」——按菜单做菜。改 <code>action_space</code> 只改 cfg 不够，环境 <code>__init__</code> 自检会拦住你。
+</div>
+
+<div class="ask-box">
+  <b>Q：<code>super().__init__</code> 里到底发生了什么？</b><br>
+  A：父类会：启动 Isaac Sim → 调你的 <code>_setup_scene</code> → 创建并行 env → 第一次 <code>_reset_idx</code> 所有 env。所以子类 <code>__init__</code> 后半才能安全访问 <code>self.hand</code>。
+</div>
+
+<div class="ask-box">
+  <b>Q：我只改了 URDF，训练启动就报 startup-check，怎么办？</b><br>
+  A：对照报错里的 <code>joint_names</code> 列表，更新 <code>xhand_wave_env_cfg.py</code> 的 <code>actuated_joint_names</code>。关节数变了还要改 <code>action_space</code> 和网络输入维。
+</div>
+
+<div class="ask-box">
+  <b>Q：num_envs=10 时，每个 buffer 第一维是 10 吗？</b><br>
+  A：对。例如 <code>prev_targets.shape == (10, 21)</code> 表示 10 个并行宇宙各有一份关节目标；GPU 一次 kernel 就算完 10 行，这是 IsaacLab 比「for 循环 10 次单 env」快几个数量级的原因。
+</div>
+
+<h2 id="map">十一、回调 ↔ 文件行号速查</h2>
+<table>
+  <thead><tr><th>函数</th><th>约行</th><th>下一章</th></tr></thead>
+  <tbody>
+    <tr><td><code>__init__</code></td><td>31–192</td><td>buffer 表见上</td></tr>
+    <tr><td><code>_setup_scene</code></td><td>194–213</td><td>—</td></tr>
+    <tr><td><code>_pre_physics_step</code></td><td>215–234</td><td><a href="02-env-reward.html#action">02 · 增量动作</a></td></tr>
+    <tr><td><code>_apply_action</code></td><td>236–243</td><td><a href="02-env-reward.html#pd">02 · PD</a></td></tr>
+    <tr><td><code>_get_observations</code></td><td>245–253</td><td><a href="17-obs-reward-code.html">17 · compute_observations</a></td></tr>
+    <tr><td><code>_get_rewards</code></td><td>255–286</td><td><a href="17-obs-reward-code.html#rewards">17 · 六项奖励</a></td></tr>
+    <tr><td><code>_get_dones</code></td><td>288–304</td><td><a href="17-obs-reward-code.html#dones">17 · 终止与重力课程</a></td></tr>
+    <tr><td><code>_reset_idx</code></td><td>313–386</td><td><a href="18-grasp-cache.html">18 · 抓取缓存</a></td></tr>
+    <tr><td><code>compute_observations</code></td><td>416–493</td><td><a href="17-obs-reward-code.html">17 章全文</a></td></tr>
+  </tbody>
+</table>
+
+<h2 id="reading-tips">十二、新手读代码顺序建议</h2>
+<ol>
+  <li>先扫 <a href="#glossary">术语表</a> 和 <a href="#game-loop">游戏循环</a>，建立全局地图；</li>
+  <li>打开 <code>xhand_wave_env.py</code>，从 <code>__init__</code> 的 buffer 块对照 <a href="#buffers">3.2 节类比表</a>；</li>
+  <li>跟 <code>_pre_physics_step</code> → <code>_apply_action</code> 走一遍增量 PD；</li>
+  <li>跳 <a href="17-obs-reward-code.html">17 章</a> 看 186 维怎么拼，再回来看 <code>_get_rewards</code>；</li>
+  <li>训练前读 <a href="18-grasp-cache.html">18 章</a> 理解 reset 抽样从哪来。</li>
+</ol>
+<p>不必一次读完 500 行源码；按「钩子函数」切块，每块对照本章 walk-table 即可。</p>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 第一次打开 xhand_wave_env.py 看哪几行</div>
+  <table>
+    <tbody>
+      <tr><td>31–35 行</td><td>reset_height 为何在 super 之前——第一个「顺序陷阱」。</td></tr>
+      <tr><td>82–98 行</td><td>所有 buffer 的 zeros 分配；对照 3.2 类比表。</td></tr>
+      <tr><td>215–243 行</td><td>动作怎么变力矩——训练最常改的两函数。</td></tr>
+      <tr><td>416–493 行</td><td>观测工厂；留给 17 章细读。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？（无需 Isaac Sim）</summary>
+  <div class="tryit-body">
+    <p>在 <code>era_dexhand_lab</code> 根目录，用 Python 确认类可 import、cfg 字段一致：</p>
+    <pre><code>python -c "
+from rl_isaaclab.tasks.inhand_rotate.xhand_wave_env_cfg import XhandWaveEnvCfg
+cfg = XhandWaveEnvCfg()
+assert cfg.action_space == 21
+assert cfg.observation_space == 186
+assert cfg.observation_space % 3 == 0
+print('cfg OK:', cfg.action_space, cfg.observation_space, cfg.prop_hist_len)
+"</code></pre>
+    <p>要亲眼看一步回调顺序，需 headless 跑 <code>train.py --num_envs 2</code> 并开 TensorBoard 看 <code>extras</code> 曲线。</p>
+  </div>
+</details>
+
+<div class="tip">
+<b>本章小结。</b> <code>XhandWaveInhandRotateEnv</code> = 场景搭建 + 增量 PD 控制 + 抓取缓存重置 + 滑动窗口观测。把 DirectRLEnv 想成游戏主循环：PPO 只负责「出招」，环境负责「物理 + 计分 + 重开」。一步 step 的顺序是 <code>pre_physics → physics×12 → apply → obs/reward/done</code>。<code>__init__</code> 里每个 buffer 都有明确角色——像游戏 UI 缓存，开局分配、整局复用。下一章钻进 <code>compute_observations</code> 和奖励公式，把 186 维逐索引拆开。</div>
+
+<div class="pager">
+  <a href="15-config-system.html"><div class="dir">← 上一章</div><div class="ttl">15 · 配置系统</div></a>
+  <a class="next" href="17-obs-reward-code.html"><div class="dir">下一章 →</div><div class="ttl">17 · 观测与奖励代码</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 16 章 · 环境生命周期</footer>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  Viz.envStepSequence('envSeq');
+});
+</script>
+</body>
+</html>

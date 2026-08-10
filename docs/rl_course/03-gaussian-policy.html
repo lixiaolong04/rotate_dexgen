@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03 · 高斯策略、对数概率与熵</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 03 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 03 · 策略的形状</div>
+  <h1>高斯策略、对数概率与熵</h1>
+  <p class="sub">连续动作怎么做到"随机探索但又听话"？答案是一个钟形曲线，以及它的对数和熵。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<h2 id="why">一、为什么动作要"带随机"</h2>
+<div class="intuition">
+学骑车不能只走一条死路线，得东倒西歪地试，才能发现"原来稍微往左压一点更稳"。如果策略每次都输出一模一样的动作，它永远发现不了更好的做法——这叫<strong>探索不足</strong>。<br>
+办法是：网络不直接输出一个动作，而是输出一个<strong>钟形概率分布</strong>，真正执行时从里面<strong>随机抽一个</strong>。分布越"胖"，探索越大胆；越"瘦"，越倾向于走已知最优。
+</div>
+
+<p>对离散动作（比如上下左右）可以用 softmax 给每个动作一个概率。但我们的动作是 21 个<strong>连续</strong>的关节增量，连续空间的自然选择是<strong>高斯分布（正态分布）</strong>。</p>
+
+<h2 id="diag">二、对角高斯策略</h2>
+<p>本项目策略是一个<strong>对角协方差高斯分布</strong>：网络输出 21 维均值 $\mu$，再配一个 21 维标准差 $\sigma$，各维相互独立：</p>
+<div class="math-block">
+$$\pi_\theta(a\mid s) \;=\; \mathcal{N}\!\big(a;\; \mu_\theta(s),\; \operatorname{diag}(\sigma^2)\big)
+\;=\; \prod_{i=1}^{21} \frac{1}{\sqrt{2\pi}\,\sigma_i}\,
+\exp\!\left(-\frac{(a_i-\mu_i)^2}{2\sigma_i^2}\right).$$
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · 高斯策略</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义（含代码对应）</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\mu_\theta(s)$</td><td>动作均值，21 维，由 Actor 网络根据状态算出。代码 <code>mu = self.mu(x)</code>。</td></tr>
+      <tr><td class="sym-col">$\sigma_i$</td><td>第 $i$ 维标准差（探索幅度）。代码 <code>sigma = torch.exp(logstd)</code>。</td></tr>
+      <tr><td class="sym-col">$\operatorname{diag}(\sigma^2)$</td><td>对角协方差矩阵：各维独立，无相关性，所以能写成连乘。</td></tr>
+      <tr><td class="sym-col">$a_i$</td><td>实际采样到的第 $i$ 维动作。</td></tr>
+      <tr><td class="sym-col">$\sqrt{2\pi}\,\sigma_i$</td><td>高斯密度的归一化常数，保证概率积分为 1。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="sigma-global">一个关键细节：σ 是"全局可学习参数"</h3>
+<p>注意看代码——$\sigma$ 不是网络根据状态算出来的，而是一个<strong>独立于状态</strong>的可学习向量：</p>
+<span class="code-cap">models.py · ActorCritic.__init__ / _actor_critic</span>
+<pre><code class="lang-py">self.sigma = nn.Parameter(torch.zeros(actions_num))   # 21 维，初始为 0
+# ...
+nn.init.constant_(self.sigma, 0)                      # 初始 logσ=0 → σ=exp(0)=1
+# 前向时：
+return mu, mu*0 + sigma, value, ...                   # logstd 与状态无关，对所有 s 相同</code></pre>
+<div class="note">
+<b>为什么这样设计？</b> 探索幅度通常<b>不需要因状态而异</b>，做成一个全局参数更稳定、更省参数。训练初期 $\sigma=1$（探索大胆），随着学习推进，梯度会自动把 $\sigma$ 降下来（探索收窄、趋于确定）。代码里存的是 $\log\sigma$ 而非 $\sigma$，这样无论参数取什么实数，$\sigma=e^{\log\sigma}$ 永远为正，且对小值更敏感。
+</div>
+
+<h2 id="logprob">三、对数概率与 neglogp（推导）</h2>
+<p>PPO 训练时需要"某个动作出现的概率"。直接用概率会因连乘而数值下溢，所以一律用<strong>对数概率</strong>。对上面的连乘取对数，乘变加：</p>
+<div class="math-block">
+$$\log \pi_\theta(a\mid s) \;=\; \sum_{i=1}^{21}\left[\,
+-\tfrac{1}{2}\log(2\pi)\;-\;\log\sigma_i\;-\;\frac{(a_i-\mu_i)^2}{2\sigma_i^2}\,\right].$$
+</div>
+<p>逐项解释这三块（这是数学专业读者最该盯住的地方）：</p>
+<ul>
+  <li>$-\tfrac12\log(2\pi)$：常数项，来自归一化系数里的 $\frac{1}{\sqrt{2\pi}}$ 取对数。</li>
+  <li>$-\log\sigma_i$：来自归一化系数里的 $\frac{1}{\sigma_i}$。$\sigma$ 越大，密度峰值越矮，对数概率越小。</li>
+  <li>$-\frac{(a_i-\mu_i)^2}{2\sigma_i^2}$：核心项。动作 $a_i$ 离均值 $\mu_i$ 越远，惩罚越大（二次衰减）。</li>
+</ul>
+<p>代码里用的是它的相反数 <strong>neglogp</strong>（negative log probability），因为优化器习惯"最小化损失"：</p>
+<span class="code-cap">models.py · act</span>
+<pre><code class="lang-py">distr = torch.distributions.Normal(mu, sigma)
+selected_action = distr.sample()                          # 从分布里随机抽动作
+neglogpacs = -distr.log_prob(selected_action).sum(1)      # 对 21 维求和 = log 连乘</code></pre>
+<p class="muted"><code>.sum(1)</code> 对应公式里的 $\sum_{i=1}^{21}$——因为各维独立，联合对数概率 = 各维对数概率之和。</p>
+
+<h2 id="entropy">四、熵：探索的"温度计"</h2>
+<p><strong>熵（entropy）</strong>衡量一个分布的"不确定性/混乱度"。高斯分布越胖，熵越大。对角高斯的熵有解析式：</p>
+<div class="math-block">
+$$\mathcal{H}\big[\pi_\theta(\cdot\mid s)\big]
+\;=\; \sum_{i=1}^{21} \tfrac{1}{2}\log\!\big(2\pi e\,\sigma_i^2\big)
+\;=\; \sum_{i=1}^{21}\left[\,\tfrac12 + \tfrac12\log(2\pi) + \log\sigma_i\,\right].$$
+</div>
+<p>注意它<strong>只依赖 $\sigma$，与 $\mu$ 无关</strong>，并且随 $\log\sigma_i$ 线性增长。PPO 的损失里会加一个"熵奖励"鼓励高熵（即鼓励探索），防止策略过早变得死板。</p>
+
+<span class="code-cap">models.py · forward</span>
+<pre><code class="lang-py">entropy = distr.entropy().sum(dim=-1)   # 21 维熵相加；之后在 PPO 损失里以 entropy_coef 加权</code></pre>
+
+<div class="warn">
+<b>本项目的有趣设定。</b> PPO 配置里 <code>entropy_coef = 0.0</code>，即没有显式熵奖励。探索完全交给"$\sigma$ 这个可学习参数 + 大量并行环境的天然多样性"来提供。这在大规模并行（上万个环境）的灵巧手任务里是常见且有效的选择。
+</div>
+
+<h2 id="sample-vs-infer">五、采样 vs 推理：训练随机、部署确定</h2>
+<table>
+  <thead><tr><th>阶段</th><th>用什么</th><th>代码</th></tr></thead>
+  <tbody>
+    <tr><td>训练采样</td><td>从分布<b>随机抽</b> $a\sim\mathcal N(\mu,\sigma)$，保留探索</td><td><code>act()</code> → <code>distr.sample()</code></td></tr>
+    <tr><td>测试/部署</td><td>直接用<b>均值</b> $a=\mu$，最确定、最稳</td><td><code>act_inference()</code> → 只返回 <code>mu</code></td></tr>
+  </tbody>
+</table>
+<div class="intuition">
+练车时大胆试错（采样），考试和上路时就走最稳的那条线（取均值）。同一个钟形分布，训练取"随机一抽"，部署取"正中心"。
+</div>
+
+<h2 id="viz">六、动手感受：σ 如何掌管探索</h2>
+
+<div class="viz">
+  <div class="viz-title">高斯采样动画 · 探索 vs 利用</div>
+  <div class="viz-sub">蓝色钟形是策略分布 N(μ, σ)，竖线是均值 μ。点"采样一次"会抽出一个动作（小竖标）。拖动 σ 感受分布变胖/变瘦。</div>
+  <canvas id="gCanvas"></canvas>
+  <div class="controls" id="gCtl"></div>
+  <div class="readout" id="gOut"></div>
+</div>
+
+<div class="viz">
+  <div class="viz-title">熵随 σ 的变化</div>
+  <div class="viz-sub">单维高斯的熵 = ½·log(2πe σ²)。红点是当前 σ 对应的熵——可见 σ 越大，熵越高（越鼓励探索）。</div>
+  <canvas id="entCanvas"></canvas>
+  <div class="readout" id="entOut"></div>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> 策略 = 对角高斯 $\mathcal N(\mu_\theta(s),\sigma)$；$\mu$ 由网络给、$\sigma$ 是全局可学习的探索旋钮。对数概率把连乘变连加，是 PPO 计算"概率比"的原料；熵是探索的温度计。下一章我们要回答另一个核心问题：怎么判断"刚抽到的这个动作，到底好不好"——这就是优势估计 GAE。
+</div>
+
+<div class="pager">
+  <a href="02-env-reward.html"><div class="dir">← 上一章</div><div class="ttl">02 · 本项目的 MDP 与奖励塑形</div></a>
+  <a class="next" href="04-gae.html"><div class="dir">下一章 →</div><div class="ttl">04 · 广义优势估计 GAE</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 03 章</footer>
+
+<script>
+function gaussPdf(x, mu, s) { return Math.exp(-((x-mu)*(x-mu))/(2*s*s)) / (Math.sqrt(2*Math.PI)*s); }
+function randn() { let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+/* ---------- 高斯采样动画 ---------- */
+(function () {
+  const cv = document.getElementById('gCanvas');
+  const out = document.getElementById('gOut');
+  let ctx, sigma = 1.0, mu = 0.2, samples = [];
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0, 0, W, H);
+    const box = { x: 40, y: 16, w: W - 60, h: H - 50 };
+    const xmin = -1.1, xmax = 1.1;
+    const X = x => box.x + map(x, xmin, xmax, 0, box.w);
+    const peak = gaussPdf(mu, mu, Math.max(0.08, sigma)); // for scaling
+    const Y = p => box.y + box.h - (p / (peak*1.05)) * box.h;
+    Viz.gridlines(ctx, box, 0, 3);
+    // curve
+    const pts = [];
+    for (let i = 0; i <= 200; i++) { const x = xmin + (xmax-xmin)*i/200; pts.push([X(x), Y(gaussPdf(x, mu, Math.max(0.08,sigma)))]); }
+    Viz.fillCurve(ctx, pts, box.y + box.h, T.accent, 0.16);
+    Viz.plot(ctx, pts, T.accent, 2.5);
+    // mu line
+    ctx.strokeStyle = T.purple; ctx.setLineDash([5,4]); ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(X(mu), box.y); ctx.lineTo(X(mu), box.y+box.h); ctx.stroke(); ctx.setLineDash([]);
+    Viz.text(ctx, 'μ='+mu.toFixed(2), X(mu)+4, box.y+12, T.purple, '12px -apple-system', 'left');
+    // ±σ band
+    ctx.fillStyle = T.accent; ctx.globalAlpha=0.08;
+    ctx.fillRect(X(mu-sigma), box.y, X(mu+sigma)-X(mu-sigma), box.h); ctx.globalAlpha=1;
+    // samples (recent)
+    samples.forEach((s, i) => {
+      const a = clamp(s, xmin, xmax);
+      const alpha = (i+1)/samples.length;
+      ctx.globalAlpha = 0.25 + 0.7*alpha;
+      ctx.strokeStyle = T.orange; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(X(a), box.y+box.h); ctx.lineTo(X(a), box.y+box.h-14); ctx.stroke();
+    });
+    ctx.globalAlpha=1;
+    // axis
+    ctx.strokeStyle=T.faint; ctx.lineWidth=1; ctx.beginPath();
+    ctx.moveTo(box.x, box.y+box.h); ctx.lineTo(box.x+box.w, box.y+box.h); ctx.stroke();
+    Viz.text(ctx, '动作 a（裁剪区间 [-1,1]）', box.x+box.w, box.y+box.h+16, T.faint, '12px -apple-system', 'right');
+    const clipped = samples.filter(s => s < -1 || s > 1).length;
+    out.innerHTML = `σ = <b>${sigma.toFixed(2)}</b>。已采样 <b>${samples.length}</b> 次，其中 <b>${clipped}</b> 次落在 ±1 之外（会被裁剪）。σ 越大越敢试，但越容易撞到动作边界。`;
+  }
+  function init() { ctx = Viz.setupCanvas(cv, null, 240); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('gCtl');
+  Viz.slider(ctl, { label: '标准差 σ（探索幅度）', min: 0.08, max: 1.0, value: 1.0, oninput: v => { sigma=v; draw(); } });
+  Viz.slider(ctl, { label: '均值 μ（网络输出）', min: -0.8, max: 0.8, value: 0.2, oninput: v => { mu=v; draw(); } });
+  Viz.button(ctl, '采样一次', () => { samples.push(mu + sigma*randn()); if (samples.length>12) samples.shift(); draw(); });
+  Viz.button(ctl, '连采 50 次', () => { for(let i=0;i<50;i++){ samples.push(mu+sigma*randn()); if(samples.length>12) samples.shift(); } draw(); }, true);
+})();
+
+/* ---------- 熵随 σ 曲线 ---------- */
+(function () {
+  const cv = document.getElementById('entCanvas');
+  const out = document.getElementById('entOut');
+  let ctx, sigma = 1.0;
+  function ent(s){ return 0.5*Math.log(2*Math.PI*Math.E*s*s); }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 46, y: 16, w: W-66, h: H-46 };
+    const smin=0.05, smax=1.5, emin=ent(smin), emax=ent(smax);
+    const X = s => box.x + map(s, smin, smax, 0, box.w);
+    const Y = e => box.y + box.h - map(e, emin, emax, 0, box.h);
+    Viz.gridlines(ctx, box, 4, 3);
+    const pts=[]; for(let i=0;i<=200;i++){ const s=smin+(smax-smin)*i/200; pts.push([X(s),Y(ent(s))]); }
+    Viz.plot(ctx, pts, T.teal, 2.5);
+    Viz.axes(ctx, box, { xlabel:'σ', ylabel:'熵 H' });
+    const e = ent(sigma); Viz.dot(ctx, X(sigma), Y(e), 6, T.red);
+    out.innerHTML = `当 σ = <b>${sigma.toFixed(2)}</b> 时，单维熵 H = <b>${e.toFixed(3)}</b>。（拖上面那个动画的 σ 滑块，这里的红点会跟着动。）`;
+    return { X, Y, ent };
+  }
+  function init() { ctx = Viz.setupCanvas(cv, null, 200); draw(); }
+  Viz.onRedraw(init);
+  // 联动：监听上方 σ 滑块
+  document.querySelectorAll('#gCtl input[type=range]')[0].addEventListener('input', e => { sigma = +e.target.value; draw(); });
+})();
+</script>
+</body>
+</html>

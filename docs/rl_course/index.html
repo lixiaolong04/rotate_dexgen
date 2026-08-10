@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>强化学习课程 · era_dexhand_lab 手内旋转</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="#route">学习路线</a>
+  <a href="#arch">总体架构</a>
+  <a href="01-rl-mdp-basics.html">开始学习 →</a>
+  <span class="spacer"></span>
+  <span class="pill">era_dexhand_lab</span>
+</nav>
+
+<header class="hero">
+  <div class="eyebrow">Isaac Sim · IsaacLab · Xhand 灵巧手 · Sim-to-Real</div>
+  <h1>把「手内物体旋转」<br>讲到奶奶都能懂</h1>
+  <p>这是一套为零基础读者准备、又给数学专业读者留足推导的强化学习教学文档。从最朴素的「试错学习」直觉，一路走到 PPO 的裁剪目标与 RMA 两阶段蒸馏的每一个符号。所有可视化都能动手拖一拖。</p>
+  <p style="margin-top:28px;"><a class="btn" href="01-rl-mdp-basics.html">从第 01 章开始</a></p>
+</header>
+
+<main class="wrap">
+
+  <section id="arch">
+    <h2>一张图看懂整个项目</h2>
+    <p class="lead">这个项目要让一只机械手在手心里把一个圆柱体不停地转圈。难点是：仿真里"上帝视角"能知道物体的质量、摩擦力，真实机器人却不知道。解决办法是 <strong>RMA（快速运动自适应）</strong>——先用上帝视角教出一个"教师"，再训练一个只看得到普通传感器的"学生"去模仿它。</p>
+
+    <div class="viz arch">
+      <div class="viz-title">RMA 两阶段架构</div>
+      <div class="viz-sub">鼠标悬停每个模块查看说明。Stage 1 训练教师策略，Stage 2 蒸馏出可上真机的学生策略。</div>
+      <div id="archDiagram"></div>
+      <div id="archInfo" class="readout">把鼠标移到上面的模块上，这里会显示它的作用。</div>
+    </div>
+
+    <div class="intuition">
+      想象教小朋友骑车。第一阶段：爸爸在后面扶着车（=仿真里的特权信息，知道一切），小朋友很快学会平衡。第二阶段：爸爸悄悄松手，小朋友靠自己身体的晃动感（=本体感受历史）来维持平衡。最终小朋友自己也能骑（=上真机）。PPO 负责"扶着车学会"，RMA 负责"松手也能骑"。
+    </div>
+  </section>
+
+  <section id="route">
+    <h2>学习路线</h2>
+    <p class="lead">按顺序阅读效果最好。每一章都有「奶奶讲解」直觉块、对应的真实代码、完整公式推导与符号表，以及至少一个可以拖动的交互可视化。</p>
+
+    <div class="grid">
+      <a class="route-card" href="01-rl-mdp-basics.html">
+        <div class="num">01</div>
+        <h3>强化学习与 MDP 基础</h3>
+        <p>状态、动作、奖励、策略、回报、价值与折扣因子 γ。一切的地基。</p>
+        <span class="tag">γ 折扣交互动画</span>
+      </a>
+      <a class="route-card" href="02-env-reward.html">
+        <div class="num">02</div>
+        <h3>本项目的 MDP 与奖励塑形</h3>
+        <p>观测/动作到底是什么向量？六项奖励如何拼出"转得又稳又省力"。</p>
+        <span class="tag">奖励权重调节器</span>
+      </a>
+      <a class="route-card" href="03-gaussian-policy.html">
+        <div class="num">03</div>
+        <h3>高斯策略、对数概率与熵</h3>
+        <p>连续动作怎么"随机但可控"？σ 如何掌管探索与利用。</p>
+        <span class="tag">采样动画 + σ 滑块</span>
+      </a>
+      <a class="route-card" href="04-gae.html">
+        <div class="num">04</div>
+        <h3>广义优势估计 GAE</h3>
+        <p>"这一步比平均水平好多少？"TD 误差与 λ-回报的偏差-方差权衡。</p>
+        <span class="tag">λ/γ 双滑块</span>
+      </a>
+      <a class="route-card" href="05-ppo.html">
+        <div class="num">05</div>
+        <h3>PPO 核心算法</h3>
+        <p>裁剪目标为何能"小步快跑不翻车"，加上 KL 自适应学习率。</p>
+        <span class="tag">裁剪曲线 + 调度器</span>
+      </a>
+      <a class="route-card" href="06-rma-distillation.html">
+        <div class="num">06</div>
+        <h3>RMA / ProprioAdapt 蒸馏</h3>
+        <p>第二阶段：用历史传感器"反推"出看不见的物理属性。</p>
+        <span class="tag">师生信息流图</span>
+      </a>
+      <a class="route-card" href="07-tconv-network.html">
+        <div class="num">07</div>
+        <h3>TConv 与网络结构</h3>
+        <p>一维时序卷积如何把 30 帧历史压成 8 个数；Actor-Critic 全貌。</p>
+        <span class="tag">卷积滑窗动画</span>
+      </a>
+      <a class="route-card" href="08-normalization.html">
+        <div class="num">08</div>
+        <h3>RunningMeanStd 在线归一化</h3>
+        <p>不存全部数据，也能在线算出均值方差的 Welford 合并公式。</p>
+        <span class="tag">在线收敛动画</span>
+      </a>
+      <a class="route-card" href="09-domain-randomization.html">
+        <div class="num">09</div>
+        <h3>域随机化与重力课程</h3>
+        <p>为什么要"故意把仿真搞乱"？这正是 sim-to-real 的灵魂。</p>
+        <span class="tag">采样分布 + 课程曲线</span>
+      </a>
+      <a class="route-card" href="10-pipeline-deploy.html">
+        <div class="num">10</div>
+        <h3>完整流程与代码地图</h3>
+        <p>从生成抓取缓存到真机部署的端到端串讲与命令速查。</p>
+        <span class="tag">端到端时间线</span>
+      </a>
+      <a class="route-card" href="11-sim-to-real.html">
+        <div class="num">11</div>
+        <h3>Sim-to-Real 实战</h3>
+        <p>现实落差四来源、三大流派，以及观测对齐、关节重映射、延迟、触觉、部署状态机等真机落地细节。</p>
+        <span class="tag">现实落差 / 重映射 / 状态机</span>
+      </a>
+      <a class="route-card" href="12-deploy-walkthrough.html">
+        <div class="num">12</div>
+        <h3>部署到真机逐行精讲</h3>
+        <p>零基础走读 deploy_xhand/ 五个零件：主循环、推理、观测拼装、关节重映射、触觉、暖启动抓取、键盘安全状态机与离线 dry-run。</p>
+        <span class="tag">五零件 / 控制循环 / dry-run</span>
+      </a>
+    </div>
+
+    <div class="part-label">Part B · 代码逐行导读（13–22）</div>
+    <p class="lead muted">面向 Python 初学：每章含<strong>术语表</strong>、<strong>代码|白话对照表</strong>（walk-table）、<strong>「你可能会问」</strong>答疑框。建议打开对应 <code>.py</code> 文件并排对照。与 Part A 原理章节交叉阅读。</p>
+
+    <div class="grid">
+      <a class="route-card" href="13-project-map.html">
+        <div class="num">13</div>
+        <h3>项目地图与 Python 补课</h3>
+        <p>目录树、pip install、Tensor shape、gym 注册、Xhand/Sharpa 对比、阅读顺序。</p>
+        <span class="tag">全局地图</span>
+      </a>
+      <a class="route-card" href="14-entry-scripts.html">
+        <div class="num">14</div>
+        <h3>入口脚本逐行导读</h3>
+        <p>train / gen_grasp / play 三脚本：AppLauncher、Hydra、gym.make、PPO.train() 调用链。</p>
+        <span class="tag">CLI → 训练</span>
+      </a>
+      <a class="route-card" href="15-config-system.html">
+        <div class="num">15</div>
+        <h3>配置系统</h3>
+        <p>gym.register、xhand_wave_env_cfg、ppo_cfg.yaml、ConfigWrapper、优先级栈。</p>
+        <span class="tag">cfg 合并</span>
+      </a>
+      <a class="route-card" href="16-env-lifecycle.html">
+        <div class="num">16</div>
+        <h3>环境生命周期</h3>
+        <p>DirectRLEnv 回调时序、__init__ buffer、_setup_scene、PD 控制、_reset_idx。</p>
+        <span class="tag">step 时序</span>
+      </a>
+      <a class="route-card" href="17-obs-reward-code.html">
+        <div class="num">17</div>
+        <h3>观测与奖励代码</h3>
+        <p>compute_observations 逐行、186 维索引表、六项 reward、priv_info。</p>
+        <span class="tag">186 维拆解</span>
+      </a>
+      <a class="route-card" href="18-grasp-cache.html">
+        <div class="num">18</div>
+        <h3>抓取缓存</h3>
+        <p>Grasp 环境差异、.npy 格式、gen_grasp 主循环、cache 采样。</p>
+        <span class="tag">起手式 DB</span>
+      </a>
+      <a class="route-card" href="19-wrapper-layer.html">
+        <div class="num">19</div>
+        <h3>Wrapper 适配层</h3>
+        <p>GymStyleEnvWrapper reset/step、extras 观测、VecEnv 契约。</p>
+        <span class="tag">env ↔ PPO</span>
+      </a>
+      <a class="route-card" href="20-ppo-training-loop.html">
+        <div class="num">20</div>
+        <h3>PPO 训练循环代码</h3>
+        <p>train / play_steps / train_epoch 逐行、ExperienceBuffer、GAE。</p>
+        <span class="tag">rollout + 更新</span>
+      </a>
+      <a class="route-card" href="21-networks-padapt.html">
+        <div class="num">21</div>
+        <h3>网络与 ProprioAdapt</h3>
+        <p>ActorCritic、TConv、RunningMeanStd、Stage 2 冻结与 MSE 蒸馏。</p>
+        <span class="tag">model 代码</span>
+      </a>
+      <a class="route-card" href="22-one-step-capstone.html">
+        <div class="num">22</div>
+        <h3>一步训练全链路 Capstone</h3>
+        <p>reset→step→GAE→backward 时间线、改参连锁反应、20 条过关 checklist。</p>
+        <span class="tag">全链路复盘</span>
+      </a>
+    </div>
+  </section>
+
+  <hr>
+  <div class="note">
+    <b>阅读小贴士。</b> 数学公式用 MathJax 渲染（已内置离线，无需联网）。所有交互可视化纯前端实现，双击 HTML 即可在浏览器打开。代码引用均标注了在仓库中的文件与含义。<br><br>
+    <b>零基础读代码（Part B 13–22）：</b> 每章开头有「零、读代码之前」术语表；灰色<strong>对照表</strong>是「左边代码、右边白话」；橙色<strong>你可能会问</strong>框回答常见疑惑。读第 14 章时请在 IDE 里同时打开 <code>rl_isaaclab/scripts/train.py</code> 对照行号。
+  </div>
+
+</main>
+
+<footer>
+  era_dexhand_lab · 强化学习教学文档 · 基于 In-Hand Object Rotation via Rapid Motor Adaptation (Qi et al., 2022)
+</footer>
+
+<script>
+/* ---------- 首页架构图（内联 SVG，可悬停） ---------- */
+(function () {
+  const info = {
+    priv:   ['特权信息 priv_info（8 维）', '仿真"上帝视角"才知道的物理量：物体质量、摩擦系数、质心偏移、当前相对位移。真机上拿不到，所以只在训练时用。'],
+    enc:    ['特权编码器 env_mlp', '把 8 维特权信息压成一个 8 维"隐变量 z"。它是教师策略的秘密小抄。'],
+    obs:    ['本体观测 obs（约 186 维）', '机器人自己就能测到的量：关节角、控制目标、指尖触觉、近 3 帧历史。真机仿真都有。'],
+    actor:  ['Actor-Critic 主干 MLP', 'Actor 输出 21 个关节的动作均值，Critic 估计状态价值。中间层 [512,256,128]。'],
+    ppo:    ['PPO 优化（Stage 1）', '用裁剪目标 + GAE 优势 + KL 自适应学习率训练教师策略，让它学会转物体。'],
+    hist:   ['本体感受历史 proprio_hist', '把最近 30 帧的本体观测堆起来——物体重不重、滑不滑，都藏在这段历史的动态里。'],
+    tconv:  ['TConv 适配模块', '一维时序卷积，把 30 帧历史"反推"成一个 8 维估计隐变量 ẑ，去逼近教师的 z。'],
+    distill:['监督蒸馏（Stage 2）', '冻结教师，只训练 TConv，让 ẑ ≈ z。损失就是两者的均方误差。'],
+    deploy: ['真机部署', '部署时丢掉特权信息，只用 obs + 历史 → TConv → 主干 → 动作。学生独立工作。'],
+  };
+  function box(x, y, w, h, label, key, fill) {
+    return `<g class="abox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14"
+            fill="${fill}" stroke="rgba(0,0,0,0.06)"></rect>
+      <text x="${x + w / 2}" y="${y + h / 2 + 5}" text-anchor="middle"
+            font-size="14" font-weight="600" fill="#fff">${label}</text>
+    </g>`;
+  }
+  function arrow(x1, y1, x2, y2, dashed) {
+    return `<path d="M${x1},${y1} L${x2},${y2}" stroke="var(--text-faint)" stroke-width="2"
+      fill="none" marker-end="url(#ah)" ${dashed ? 'stroke-dasharray="5 5"' : ''}></path>`;
+  }
+  const A = '#0071e3', P = '#af52de', G = '#34c759', O = '#ff9f0a', T = '#30c8c9';
+  const svg = `
+  <svg viewBox="0 0 920 430" class="stage-flow" role="img" aria-label="RMA 两阶段架构图">
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path>
+      </marker>
+    </defs>
+    <text x="20" y="28" font-size="13" font-weight="700" fill="${A}">STAGE 1 · 教师（特权信息）</text>
+    ${box(20, 45, 180, 56, '特权信息 priv_info', 'priv', P)}
+    ${box(20, 125, 180, 56, '本体观测 obs', 'obs', A)}
+    ${box(245, 45, 150, 56, 'env_mlp 编码器', 'enc', P)}
+    ${box(245, 125, 150, 56, 'PPO 优化', 'ppo', O)}
+    ${box(450, 85, 160, 56, 'Actor-Critic 主干', 'actor', A)}
+    ${box(660, 85, 150, 56, '动作 (21 维)', 'actor', G)}
+    ${arrow(200, 73, 243, 73)}
+    ${arrow(395, 73, 525, 88)}
+    ${arrow(200, 153, 243, 153)}
+    ${arrow(395, 153, 525, 138)}
+    ${arrow(610, 113, 658, 113)}
+
+    <line x1="20" y1="225" x2="900" y2="225" stroke="var(--border)" stroke-width="1"></line>
+    <text x="20" y="258" font-size="13" font-weight="700" fill="${T}">STAGE 2 · 学生（蒸馏，可上真机）</text>
+    ${box(20, 280, 200, 56, '本体感受历史 (30 帧)', 'hist', A)}
+    ${box(275, 280, 160, 56, 'TConv 适配模块', 'tconv', T)}
+    ${box(490, 280, 170, 56, '估计隐变量 ẑ', 'distill', T)}
+    ${box(490, 360, 170, 50, '监督蒸馏 ‖ẑ−z‖²', 'distill', O)}
+    ${box(710, 280, 180, 56, '真机部署 🤖', 'deploy', G)}
+    ${arrow(220, 308, 273, 308)}
+    ${arrow(435, 308, 488, 308)}
+    ${arrow(660, 308, 708, 308)}
+    ${arrow(575, 280, 575, 226, true)}
+    ${arrow(575, 336, 575, 360, true)}
+    <text x="585" y="255" font-size="11" fill="var(--text-faint)">逼近教师 z</text>
+  </svg>`;
+  const host = document.getElementById('archDiagram');
+  host.innerHTML = svg;
+  const out = document.getElementById('archInfo');
+  host.querySelectorAll('.abox').forEach(g => {
+    g.addEventListener('mouseenter', () => {
+      const d = info[g.dataset.k];
+      if (d) out.innerHTML = '<b>' + d[0] + '。</b> ' + d[1];
+    });
+  });
+})();
+</script>
+</body>
+</html>

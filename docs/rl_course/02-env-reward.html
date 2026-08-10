@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>02 · 本项目的 MDP 与奖励塑形</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 02 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 02 · 把抽象变具体</div>
+  <h1>本项目的 MDP 与奖励塑形</h1>
+  <p class="sub">观测、动作到底是哪些数字？奖励为什么要拆成六项？这一章把第 01 章的符号全部"通电"。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>代码详解。</b> 本章讲概念与公式；对应源码见 Part B：<a href="16-env-lifecycle.html">第 16 章</a>（环境生命周期）、<a href="17-obs-reward-code.html">第 17 章</a>（观测/奖励逐行）。</div>
+
+<h2 id="overview">一、任务一句话</h2>
+<div class="intuition">
+让机械手把手心里的圆柱体，绕一个固定的轴（默认是竖直的 z 轴）不停地往一个方向转，而且别把它转掉、转飞、或者把手指拧到极限。转得越顺，给的分越高；动作太猛、太费力、物体乱跑，就扣分。
+</div>
+
+<h2 id="action">二、动作空间 A：21 个关节</h2>
+<p>动作是一个 21 维向量 $a_t\in[-1,1]^{21}$，每一维对应一个被驱动的手指关节（拇指、食指、中指、无名指、小指共 21 个自由度）。</p>
+
+<p>关键点：动作<strong>不是</strong>直接的关节角度，而是"在上一时刻目标基础上的<strong>增量</strong>"。这叫<strong>增量位置控制（relative target）</strong>：</p>
+<div class="math-block">
+$$\text{target}_t \;=\; \text{target}_{t-1} \;+\; \alpha \cdot a_t,
+\qquad \alpha = \tfrac{1}{24}\ (\text{action\_scale}).$$
+</div>
+<p>然后把目标"夹"在关节物理上下限内（saturate），再喂给力矩控制器。</p>
+
+<span class="code-cap">xhand_wave_env.py · _pre_physics_step</span>
+<pre><code class="lang-py">actions = saturate(actions, -clip_actions, clip_actions)   # 先裁到 ±1
+targets = self.prev_targets + self.cfg.action_scale * self.actions
+self.cur_targets[:, idx] = saturate(targets, lower, upper)  # 再裁到关节限位</code></pre>
+
+<div class="intuition">
+为什么用"增量"而不是"绝对角度"？因为一个网络直接输出 0.73 弧度这种绝对值很难学，而输出"再多弯一点 / 松一点"这种<strong>相对微调</strong>既平滑又安全，天然限制了每步的动作幅度（最多 ±1/24 弧度）。
+</div>
+
+<h3 id="pd">力矩控制：动作如何变成力</h3>
+<p>目标位置确定后，底层用 <strong>PD 控制器</strong>算出每个关节真正施加的力矩：</p>
+<div class="math-block">
+$$\tau \;=\; k_p\,(\,\text{target} - q\,) \;-\; k_d\,\dot q.$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · PD 控制</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\tau$</td><td>关节力矩（代码 <code>self.torques</code>）。</td></tr>
+      <tr><td class="sym-col">$k_p$</td><td>比例增益（刚度），"离目标越远，拉力越大"。代码 <code>p_gain</code>。</td></tr>
+      <tr><td class="sym-col">$k_d$</td><td>微分增益（阻尼），"动得越快，越踩刹车"，防止抖动。代码 <code>d_gain</code>。</td></tr>
+      <tr><td class="sym-col">$q,\ \dot q$</td><td>当前关节角度与角速度。</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="muted">$k_p,k_d$ 在每局重置时会被随机扰动（域随机化，见<a href="09-domain-randomization.html">第 09 章</a>），逼策略学会"对不同手感都鲁棒"。</p>
+
+<h2 id="obs">三、观测空间 S：186 维是怎么拼的</h2>
+<p>策略每步看到的观测是 186 维。它由"单帧 62 维 × 最近 3 帧"堆成：</p>
+
+<div class="math-block">
+$$\underbrace{186}_{\text{observation\_space}} \;=\; \underbrace{62}_{\text{单帧}} \times \underbrace{3}_{\text{帧}},
+\qquad 62 = \underbrace{21}_{\text{关节角}} + \underbrace{21}_{\text{控制目标}} + \underbrace{5}_{\text{指尖触觉}} + \underbrace{15}_{\text{接触点}}.$$
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · 单帧观测的四块</div>
+  <table>
+    <thead><tr><th>分量</th><th>维度</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>归一化关节角 $\hat q$</td><td>21</td><td>当前 21 个关节角度，按限位归一化到 ±1（含小噪声，模拟编码器误差）。</td></tr>
+      <tr><td>当前控制目标</td><td>21</td><td>这一步发出去的目标位置，让策略"知道自己刚才下了什么命令"。</td></tr>
+      <tr><td>指尖触觉力</td><td>5</td><td>五个指尖的接触力大小（平滑+延迟+噪声后的值）。</td></tr>
+      <tr><td>接触点位置</td><td>15</td><td>5 指 × 3 维接触点坐标（默认关闭，置零占位）。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+<b>为什么要 3 帧？</b> 单看一帧只知道"现在手在哪"，看不出"在怎么动"。叠加最近 3 帧，网络就能感知速度和趋势——这正是为了满足第 01 章说的<b>马尔可夫性</b>，把"决定未来所需的信息"塞进状态。<br>
+此外还有一份更长的 <b>30 帧历史</b>（<code>proprio_hist</code>），它不给教师用，而是留给第二阶段的 TConv 适配模块（<a href="06-rma-distillation.html">第 06 章</a>）。
+</div>
+
+<span class="code-cap">xhand_wave_env.py · compute_observations（节选）</span>
+<pre><code class="lang-py"># 把【归一化关节角(带噪) + 目标 + 触觉 + 接触点】拼成单帧，压入滑动窗口
+cur_obs_buf = unscale(joint_noise + hand_dof_pos, lower, upper).unsqueeze(1)
+cur_obs_buf = torch.cat([cur_obs_buf, cur_targets, sensed_contacts, contact_pos], dim=-1)
+self.obs_buf_lag_history = torch.cat([prev_obs_buf, cur_obs_buf], dim=1)
+obs_buf = self.obs_buf_lag_history[:, -3:].reshape(num_envs, -1)   # 最近 3 帧 → 186 维</code></pre>
+
+<div class="warn">
+<b>关于维度数字的脚注。</b> 本章数字取自当前代码 <code>xhand_wave_env_cfg.py</code>（<code>action_space=21, observation_space=186, prop_hist_len=30</code>）。项目 <code>CLAUDE.md</code> 的对照表写的是 12/132，那是另一套精简变体；以你实际要跑的 cfg 为准即可，原理完全一致。
+</div>
+
+<h2 id="reward">四、奖励 R：六项的合奏</h2>
+<p>这是本章的重头戏。总奖励是六项的<strong>加权和</strong>，每一项管一件事。先看总公式，再逐项拆。</p>
+
+<div class="math-block">
+$$r \;=\; w_{\text{rot}}\, r_{\text{rot}}
+\;+\; w_{\text{lin}}\, p_{\text{lin}}
+\;+\; w_{\text{pos}}\, p_{\text{pos}}
+\;+\; w_{\tau}\, p_{\tau}
+\;+\; w_{\text{wk}}\, p_{\text{wk}}
+\;+\; w_{\text{op}}\, r_{\text{op}}.$$
+</div>
+
+<span class="code-cap">xhand_wave_env.py · compute_rewards（torch.jit）</span>
+<pre><code class="lang-py">reward  = rotate_reward          * rotate_reward_scale        #  +2.5
+reward += object_linvel_penalty  * object_linvel_penalty_scale #  -0.3
+reward += pos_diff_penalty       * pos_diff_penalty_scale      #  -0.4
+reward += torque_penalty         * torque_penalty_scale        #  -0.1
+reward += work_penalty           * work_penalty_scale          #  -0.5
+reward += object_pos_diff        * object_pos_reward_scale      # +0.003</code></pre>
+
+<h3 id="rot">① 旋转奖励 r_rot（主菜，唯一的正向驱动）</h3>
+<p>先用相邻两帧的四元数差，算出物体的<strong>角速度</strong>，再把它投影到目标旋转轴上，最后裁剪：</p>
+<div class="math-block">
+$$\omega \;=\; \frac{\mathrm{axisangle}\big(q_t \otimes q_{t-1}^{-1}\big)}{\Delta t},
+\qquad
+r_{\text{rot}} \;=\; \clip\!\big(\,\omega \cdot \hat n,\; -0.5,\; 0.5\,\big).$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · 旋转奖励</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$q_t, q_{t-1}$</td><td>物体本帧/上帧的姿态四元数。</td></tr>
+      <tr><td class="sym-col">$\otimes$</td><td>四元数乘法；$q_t\otimes q_{t-1}^{-1}$ 表示"这一帧相对上一帧转了多少"。</td></tr>
+      <tr><td class="sym-col">$\mathrm{axisangle}(\cdot)$</td><td>把四元数转成"轴×角"向量，方向是转轴、长度是转角。</td></tr>
+      <tr><td class="sym-col">$\Delta t$</td><td>一个控制步的时长（代码 <code>step_dt</code>）。除以它就得到角速度。</td></tr>
+      <tr><td class="sym-col">$\hat n$</td><td>目标旋转轴单位向量（<code>rot_axis</code>，默认 $(0,0,1)$）。点积 $\omega\cdot\hat n$ = 沿目标轴的角速度分量。</td></tr>
+      <tr><td class="sym-col">$\clip(\cdot,-0.5,0.5)$</td><td>把奖励夹在 ±0.5，防止"猛甩一下骗高分"，鼓励持续平稳旋转。</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="intuition">
+点积 $\omega\cdot\hat n$ 的妙处：往<strong>正确方向</strong>转，分量为正、加分；往<strong>反方向</strong>转，分量为负、变成惩罚；绕<strong>错误的轴</strong>乱晃（比如让物体点头而不是转圈），在目标轴上的投影几乎为 0，没分。一个点积就同时管了"方向对不对"和"快不快"。
+</div>
+
+<h3 id="penalties">②~⑤ 四个惩罚项（负权重，教它"优雅地"转）</h3>
+<table>
+  <thead><tr><th>项</th><th>公式</th><th>管什么</th></tr></thead>
+  <tbody>
+    <tr><td>线速度惩罚 $p_{\text{lin}}$</td><td>$\dfrac{\lVert x_t - x_{t-1}\rVert_1}{\Delta t}$</td><td>物体质心别乱平移（只许转、不许跑）。</td></tr>
+    <tr><td>姿态偏离惩罚 $p_{\text{pos}}$</td><td>$\sum_i (q_i - q_i^{\text{default}})^2$</td><td>手指别离"自然抓握姿态"太远，避免拧到奇怪构型。</td></tr>
+    <tr><td>力矩惩罚 $p_{\tau}$</td><td>$\sum_i \tau_i^2$</td><td>别用蛮力，省电、保护电机。</td></tr>
+    <tr><td>做功惩罚 $p_{\text{wk}}$</td><td>$\big(\sum_i \tau_i\,\dot q_i\big)^2$</td><td>惩罚"功率"（力矩×速度），让动作更节能更平滑。</td></tr>
+  </tbody>
+</table>
+<p class="muted">这四项权重都是负数，所以它们越大、总奖励越低。它们不教手"怎么转"，而是约束手"别太用力、别乱动"——这对 sim-to-real 至关重要，因为蛮力动作在真机上往往直接失败。</p>
+
+<h3 id="objpos">⑥ 位置保持奖励 r_op（防掉落的小奖励）</h3>
+<div class="math-block">
+$$r_{\text{op}} \;=\; \frac{1}{\lVert x_t - x^{\text{default}}\rVert + 0.001}.$$
+</div>
+<p>物体离初始位置越近，这个值越大（分母越小）。它温柔地把物体"吸"在手心中央，权重很小（0.003），只起辅助作用。加 0.001 是为了防止分母为零。</p>
+
+<div class="viz">
+  <div class="viz-title">奖励项权重调节器</div>
+  <div class="viz-sub">拖动六个权重，看每一项对总奖励的贡献（绿色加分、红色扣分）。下面用一组"典型时刻"的原始值演示——这正是调参工程师每天在做的事。</div>
+  <canvas id="rewCanvas"></canvas>
+  <div class="controls" id="rewCtl"></div>
+  <div class="readout" id="rewOut"></div>
+  <div style="margin-top:10px"><button class="btn ghost" id="rewReset">恢复默认权重</button></div>
+</div>
+
+<div class="tip">
+<b>奖励塑形（reward shaping）的哲学。</b> 只给"转得快"一项奖励，策略会学出疯狂甩手的暴力解；加上四个惩罚和一个保持项，才把它逼向"又快又稳又省力又不掉"的优雅解。<strong>设计奖励就是设计目标本身</strong>——这是强化学习里最需要经验、也最像艺术的一步。
+</div>
+
+<h2 id="done">五、终止条件：什么时候这一局结束</h2>
+<p>两种情况会重置环境（对应 <code>_get_dones</code>）：</p>
+<ul>
+  <li><strong>物体掉了</strong>：物体高度超出 [下限, 上限]（掉出手心或被顶飞）。</li>
+  <li><strong>超时</strong>：达到本局最大步数（episode 时长 20 秒）。这种"超时"会被特殊处理（value bootstrap，见<a href="04-gae.html">第 04 章</a>），因为它不代表"做错了"。</li>
+</ul>
+<p>这里还藏着一个<strong>重力课程</strong>：当几乎没人再掉物体时，自动把重力调大一点点，逐步加难度（详见<a href="09-domain-randomization.html">第 09 章</a>）。</p>
+
+<div class="pager">
+  <a href="01-rl-mdp-basics.html"><div class="dir">← 上一章</div><div class="ttl">01 · 强化学习与 MDP 基础</div></a>
+  <a class="next" href="03-gaussian-policy.html"><div class="dir">下一章 →</div><div class="ttl">03 · 高斯策略、对数概率与熵</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 02 章</footer>
+
+<script>
+(function () {
+  const cv = document.getElementById('rewCanvas');
+  const out = document.getElementById('rewOut');
+  // 典型时刻的"原始值"（量纲已粗略缩放，仅作演示）
+  const terms = [
+    { key:'rot',  name:'① 旋转奖励',   raw: 0.42, def: 2.5,   min:0,   max:4,   col:'green'  },
+    { key:'lin',  name:'② 线速度惩罚', raw: 0.25, def: -0.3,  min:-1,  max:0,   col:'red'    },
+    { key:'pos',  name:'③ 姿态偏离',   raw: 0.40, def: -0.4,  min:-1,  max:0,   col:'red'    },
+    { key:'tau',  name:'④ 力矩惩罚',   raw: 0.55, def: -0.1,  min:-0.5,max:0,   col:'red'    },
+    { key:'wk',   name:'⑤ 做功惩罚',   raw: 0.30, def: -0.5,  min:-1.5,max:0,   col:'red'    },
+    { key:'op',   name:'⑥ 位置保持',   raw: 18.0, def: 0.003, min:0,   max:0.02,col:'green'  },
+  ];
+  let w = terms.map(t => t.def);
+  let ctx;
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0, 0, W, H);
+    const contrib = terms.map((t, i) => w[i] * t.raw);
+    const total = contrib.reduce((a, b) => a + b, 0);
+    const maxAbs = Math.max(1.2, ...contrib.map(c => Math.abs(c)), Math.abs(total));
+    const box = { x: 30, y: 20, w: W - 60, h: H - 56 };
+    const zeroY = box.y + box.h / 2;
+    // zero line
+    ctx.strokeStyle = T.faint; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(box.x, zeroY); ctx.lineTo(box.x + box.w, zeroY); ctx.stroke();
+    Viz.text(ctx, '0', box.x - 6, zeroY + 4, T.faint, '11px monospace', 'right');
+    const n = terms.length + 1;
+    const slot = box.w / n, bw = slot * 0.56;
+    terms.forEach((t, i) => {
+      const c = contrib[i];
+      const x = box.x + slot * (i + 0.5) - bw / 2;
+      const h = Math.abs(c) / maxAbs * (box.h / 2 - 6);
+      const y = c >= 0 ? zeroY - h : zeroY;
+      ctx.fillStyle = T[t.col];
+      Viz.roundRect(ctx, x, y, bw, Math.max(2, h), 5); ctx.fill();
+      Viz.text(ctx, t.name.slice(0,1) + t.name.slice(1,2), x + bw/2, box.y + box.h + 16, T.soft, '12px -apple-system', 'center');
+      Viz.text(ctx, c.toFixed(2), x + bw/2, c >= 0 ? y - 5 : y + h + 14, T[t.col], '11px monospace', 'center');
+    });
+    // total bar
+    const x = box.x + slot * (n - 0.5) - bw / 2;
+    const h = Math.abs(total) / maxAbs * (box.h / 2 - 6);
+    const y = total >= 0 ? zeroY - h : zeroY;
+    ctx.fillStyle = T.accent; Viz.roundRect(ctx, x, y, bw, Math.max(2, h), 5); ctx.fill();
+    Viz.text(ctx, '总和', x + bw/2, box.y + box.h + 16, T.accent, '600 12px -apple-system', 'center');
+    Viz.text(ctx, total.toFixed(2), x + bw/2, total >= 0 ? y - 5 : y + h + 14, T.accent, '600 11px monospace', 'center');
+    out.innerHTML = `当前总奖励 = <b>${total.toFixed(3)}</b>。试试把"旋转奖励"权重调到 0 —— 总奖励会变负，策略就再也学不会转了，因为没有任何正向驱动。`;
+  }
+  function init() { ctx = Viz.setupCanvas(cv, null, 260); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('rewCtl');
+  const sliders = terms.map((t, i) => Viz.slider(ctl, {
+    label: t.name + ' 权重', min: t.min, max: t.max, value: t.def,
+    step: (t.max - t.min) / 200, fmt: v => (+v).toFixed(3),
+    oninput: v => { w[i] = v; draw(); }
+  }));
+  document.getElementById('rewReset').addEventListener('click', () => {
+    terms.forEach((t, i) => { w[i] = t.def; sliders[i].value = t.def; sliders[i].dispatchEvent(new Event('input')); });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# XHand deployment offline-validation image.
+#
+# This image intentionally omits the vendor SDK. It exercises the complete
+# policy/observation/action pipeline through FakeHW and must never be used to
+# drive hardware. Build the regular Dockerfile once the matching legacy
+# hand_sdk + hand_controller package is available.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip ca-certificates \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip3 install --no-cache-dir numpy termcolor tensorboardX pytest
+
+ENV PYTHONPATH=/workspace
+ENV XHAND_DEPLOY_OFFLINE_ONLY=1
+WORKDIR /workspace
+
+CMD ["bash"]

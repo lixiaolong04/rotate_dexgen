@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>08 · RunningMeanStd 在线归一化</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 08 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 08 · 关键配角①</div>
+  <h1>RunningMeanStd 在线归一化</h1>
+  <p class="sub">不存历史数据，也能边走边算出均值和方差。一个让训练稳得多的小模块，背后是优雅的并行合并公式。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<h2 id="why">一、为什么要归一化</h2>
+<div class="intuition">
+我们的观测里，关节角也许在 ±1 之间，触觉力可能是几十牛。如果直接喂给网络，"大数值"的输入会主导梯度，"小数值"的输入几乎被忽略——就像一个班里有人用米、有人用毫米报身高，老师没法公平比较。<br>
+归一化把每一维都拉到"均值 0、标准差 1"的统一尺度，让网络对每一维一视同仁。这是深度强化学习里<strong>最便宜、最有效</strong>的稳定性技巧之一。
+</div>
+
+<p>标准归一化公式人人都会：</p>
+<div class="math-block">
+$$\hat x \;=\; \frac{x - \mu}{\sqrt{\sigma^2 + \varepsilon}}.$$
+</div>
+<p>难点不在这个公式，而在：<strong>训练时数据像水流一样一批批涌来，上万环境每步都产生新数据，我们不可能把它们全存下来再算 $\mu,\sigma$。</strong> 必须"边来边更新"。</p>
+
+<h2 id="naive">二、朴素在线更新的陷阱</h2>
+<p>均值好办（累加再除），但方差若用"平方和 − 均值平方"的教科书公式在线累加，会因为两个大数相减产生<strong>灾难性抵消（catastrophic cancellation）</strong>，浮点误差爆炸。我们需要数值稳定的算法——这就是 <strong>Welford / Chan 并行合并公式</strong>。</p>
+
+<h2 id="welford">三、并行合并公式（代码核心）</h2>
+<p>设已有统计量 $(\mu, \sigma^2, n)$，现在来了一批新数据，其统计量为 $(\mu_b, \sigma_b^2, n_b)$。我们要把两者合并。先定义两组均值之差与总数：</p>
+<div class="math-block">
+$$\delta = \mu_b - \mu, \qquad n_{\text{tot}} = n + n_b.$$
+</div>
+
+<h4>① 新均值（加权平均）</h4>
+<div class="math-block">
+$$\mu' \;=\; \mu + \delta\,\frac{n_b}{n_{\text{tot}}}
+\;=\; \frac{n\,\mu + n_b\,\mu_b}{n_{\text{tot}}}.$$
+</div>
+<p class="muted">就是按样本数加权的平均，第一种写法是为了数值稳定（在旧均值基础上修正一点点）。</p>
+
+<h4>② 新方差（通过 M₂ 合并）</h4>
+<p>关键技巧是不直接合并方差，而是合并<strong>平方偏差和</strong> $M_2 = \sigma^2 \cdot n$（sum of squared deviations）：</p>
+<div class="math-block">
+$$M_2' \;=\; \underbrace{\sigma^2 n}_{m_a} \;+\; \underbrace{\sigma_b^2 n_b}_{m_b}
+\;+\; \delta^2\,\frac{n\,n_b}{n_{\text{tot}}},
+\qquad \sigma'^2 \;=\; \frac{M_2'}{n_{\text{tot}}}.$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · 并行合并</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义（代码对应）</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\mu,\sigma^2,n$</td><td>已累计的均值/方差/计数。代码 <code>running_mean, running_var, count</code>。</td></tr>
+      <tr><td class="sym-col">$\mu_b,\sigma_b^2,n_b$</td><td>本批数据的均值/方差/样本数。代码 <code>batch_mean, batch_var, batch_count</code>。</td></tr>
+      <tr><td class="sym-col">$\delta$</td><td>两组均值之差，代码 <code>delta</code>。</td></tr>
+      <tr><td class="sym-col">$m_a, m_b$</td><td>两组各自的平方偏差和 $\sigma^2 n$ 与 $\sigma_b^2 n_b$。</td></tr>
+      <tr><td class="sym-col">$\delta^2\frac{n\,n_b}{n_{\text{tot}}}$</td><td><b>修正项</b>：因两组中心不同而额外产生的偏差，是公式的精髓。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h4>③ 修正项从哪来？（给数学专业的推导）</h4>
+<p>平方偏差和的定义是 $M_2 = \sum_i (x_i - \mu)^2$。把两组数据合在一起、相对<strong>新</strong>均值 $\mu'$ 求平方偏差和。对第一组的每个点：</p>
+<div class="math-block">
+$$\sum_{i\in A}(x_i-\mu')^2 = \sum_{i\in A}\big((x_i-\mu)+(\mu-\mu')\big)^2
+= \underbrace{\sum_{i\in A}(x_i-\mu)^2}_{m_a} + n(\mu-\mu')^2$$
+</div>
+<p>（交叉项 $2(\mu-\mu')\sum_{i\in A}(x_i-\mu)=0$，因为 $\sum_{i\in A}(x_i-\mu)=0$）。对两组分别这样做，代入 $\mu-\mu' = -\delta\frac{n_b}{n_{\text{tot}}}$ 与 $\mu_b-\mu' = \delta\frac{n}{n_{\text{tot}}}$，合并整理即得：</p>
+<div class="math-block">
+$$M_2' = m_a + m_b + n\Big(\delta\tfrac{n_b}{n_{\text{tot}}}\Big)^2 + n_b\Big(\delta\tfrac{n}{n_{\text{tot}}}\Big)^2
+= m_a + m_b + \delta^2\frac{n\,n_b}{n_{\text{tot}}}.$$
+</div>
+<p class="muted">最后一步把 $\frac{n n_b^2 + n_b n^2}{n_{\text{tot}}^2} = \frac{n n_b (n_b+n)}{n_{\text{tot}}^2} = \frac{n n_b}{n_{\text{tot}}}$ 化简即可。这个修正项保证了无论分多少批来，结果都和"一次性算全部"完全一致，且数值稳定。</p>
+
+<span class="code-cap">running_mean_std.py · _update_mean_var_count_from_moments</span>
+<pre><code class="lang-py">delta = batch_mean - mean
+tot_count = count + batch_count
+new_mean = mean + delta * batch_count / tot_count
+m_a = var * count
+m_b = batch_var * batch_count
+M2 = m_a + m_b + delta**2 * count * batch_count / tot_count
+new_var = M2 / tot_count
+new_count = tot_count</code></pre>
+
+<div class="viz">
+  <div class="viz-title">在线均值/方差的收敛</div>
+  <div class="viz-sub">数据从一个真实分布（虚线）一批批流入。看"在线估计"的均值与标准差如何随样本累积，稳稳收敛到真值。</div>
+  <canvas id="convMeanCanvas"></canvas>
+  <div class="controls" id="convMeanCtl"></div>
+  <div class="readout" id="convMeanOut"></div>
+</div>
+
+<h2 id="forward">四、前向：归一化与裁剪</h2>
+<p>训练模式下，每次前向都先用当前 batch 更新统计量，再做归一化，并把结果<strong>裁剪到 ±5</strong>（挡住极端离群值）：</p>
+<span class="code-cap">running_mean_std.py · forward</span>
+<pre><code class="lang-py">if self.training:
+    mean = input.mean(self.axis); var = input.var(self.axis)
+    self.running_mean, self.running_var, self.count = \
+        self._update_mean_var_count_from_moments(..., mean, var, input.size()[0])
+# 归一化
+y = (input - current_mean) / torch.sqrt(current_var + self.epsilon)
+y = torch.clamp(y, min=-5.0, max=5.0)</code></pre>
+<div class="note">
+<b>训练 / 评估两种模式。</b> 训练时持续更新统计量；评估或部署时<b>冻结</b>统计量（<code>.eval()</code>），只用已学好的 $\mu,\sigma$ 做归一化。否则部署时少量数据会污染统计、导致行为漂移。第 05 章 PPO 里对 <code>running_mean_std</code> 的 train/eval 切换正是为此。
+</div>
+
+<h2 id="value">五、价值也归一化：还能反归一化</h2>
+<p>本项目不仅归一化观测，还归一化<strong>价值（value）</strong>（<code>value_mean_std</code>，形状 (1,)）。因为不同任务回报量级差异巨大，归一化让 Critic 更好训。但有时需要把网络输出的"归一化价值"还原回真实尺度——于是有反归一化（<code>unnorm=True</code>）路径：</p>
+<div class="math-block">
+$$x \;=\; \sqrt{\sigma^2+\varepsilon}\;\cdot\;\clip(\hat x,\,-5,\,5)\; +\; \mu.$$
+</div>
+<p class="muted">它正好是归一化的逆运算（先解除缩放再加回均值）。代码里 PPO 用它把价值预测在"归一化空间"与"真实空间"之间来回切换。$\varepsilon$（默认 1e-5）始终在根号里，防止除零/开零。</p>
+
+<div class="tip">
+<b>本章小结。</b> RunningMeanStd 用 Welford/Chan 并行公式在线、稳定地维护均值与方差，核心是合并平方偏差和 $M_2$ 时的修正项 $\delta^2\frac{n n_b}{n_{\text{tot}}}$。前向归一化并裁到 ±5；训练时更新、评估时冻结；价值用同款模块并支持反归一化。下一章是最后一个配角，也是 sim-to-real 的灵魂：域随机化。
+</div>
+
+<div class="pager">
+  <a href="07-tconv-network.html"><div class="dir">← 上一章</div><div class="ttl">07 · TConv 与网络结构</div></a>
+  <a class="next" href="09-domain-randomization.html"><div class="dir">下一章 →</div><div class="ttl">09 · 域随机化与重力课程</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 08 章</footer>
+
+<script>
+function randn(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+/* ---------- 在线均值/方差收敛 ---------- */
+(function () {
+  const cv = document.getElementById('convMeanCanvas');
+  const out = document.getElementById('convMeanOut');
+  const trueMean = 3.0, trueStd = 1.5;
+  let ctx, mean=0, M2=0, n=0, meanHist=[], stdHist=[], timer=null;
+  function addBatch(bn){
+    const xs = Array.from({length:bn}, ()=> trueMean + trueStd*randn());
+    const bm = xs.reduce((a,b)=>a+b,0)/bn;
+    const bv = xs.reduce((a,b)=>a+(b-bm)*(b-bm),0)/bn;
+    const delta = bm - mean, tot = n + bn;
+    mean = mean + delta*bn/tot;
+    M2 = M2 + bv*bn + delta*delta*n*bn/tot;
+    n = tot;
+    meanHist.push(mean); stdHist.push(Math.sqrt(M2/n));
+    if(meanHist.length>200){ meanHist.shift(); stdHist.shift(); }
+  }
+  function draw(){
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 44, y: 16, w: W-64, h: H-44 };
+    Viz.gridlines(ctx, box, 4, 4);
+    const ymin=0, ymax=5;
+    const X = i => box.x + (meanHist.length<=1?0:i/(meanHist.length-1)*box.w);
+    const Y = v => box.y + box.h - map(v, ymin, ymax, 0, box.h);
+    // true lines
+    ctx.setLineDash([5,4]); ctx.lineWidth=1.5;
+    ctx.strokeStyle=T.accent; ctx.beginPath(); ctx.moveTo(box.x,Y(trueMean)); ctx.lineTo(box.x+box.w,Y(trueMean)); ctx.stroke();
+    ctx.strokeStyle=T.purple; ctx.beginPath(); ctx.moveTo(box.x,Y(trueStd)); ctx.lineTo(box.x+box.w,Y(trueStd)); ctx.stroke();
+    ctx.setLineDash([]);
+    Viz.plot(ctx, meanHist.map((v,i)=>[X(i),Y(v)]), T.accent, 2.5);
+    Viz.plot(ctx, stdHist.map((v,i)=>[X(i),Y(v)]), T.purple, 2.5);
+    Viz.text(ctx, '真值 μ='+trueMean, box.x+box.w, Y(trueMean)-6, T.accent, '11px -apple-system','right');
+    Viz.text(ctx, '真值 σ='+trueStd, box.x+box.w, Y(trueStd)-6, T.purple, '11px -apple-system','right');
+    for(let j=0;j<=5;j++) Viz.text(ctx, j.toString(), box.x-6, Y(j)+4, T.faint, '10px monospace','right');
+    Viz.text(ctx, '累计批次 →', box.x+box.w, box.y+box.h+15, T.faint,'11px -apple-system','right');
+    out.innerHTML = `已累计 <b>${n}</b> 个样本：在线 μ = <b>${(meanHist.at(-1)??0).toFixed(3)}</b>（真值 3.0），在线 σ = <b>${(stdHist.at(-1)??0).toFixed(3)}</b>（真值 1.5）。批数越多越贴近虚线，且全程无需存任何历史数据。`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 230); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('convMeanCtl');
+  Viz.button(ctl, '来一批（64 样本）', ()=>{ addBatch(64); draw(); });
+  Viz.button(ctl, '自动流入', ()=>{ if(timer){clearInterval(timer);timer=null;return;} timer=setInterval(()=>{ addBatch(64); draw(); if(n>12000){clearInterval(timer);timer=null;} },180); });
+  Viz.button(ctl, '重置', ()=>{ mean=0;M2=0;n=0;meanHist=[];stdHist=[]; if(timer){clearInterval(timer);timer=null;} draw(); }, true);
+})();
+</script>
+</body>
+</html>

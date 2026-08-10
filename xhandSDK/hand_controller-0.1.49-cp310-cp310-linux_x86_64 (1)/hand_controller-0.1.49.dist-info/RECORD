@@ -1,0 +1,7 @@
+hand_controller/__init__.py,sha256=vWSPE3AiXfPA_283Q2LnSyYkW7M4IfZM1mcQP33GqC4,29
+hand_controller/hand_control.cpython-310-x86_64-linux-gnu.so,sha256=bkXlxCztLplD5rX6FqVvuAmk-P2qnovkIU4ii2YprRc,2043472
+hand_controller/libhand_sdk.so,sha256=zZuaYq334e_bB8bUXu80u1DRuBF1JtOWCoh_EVe65L8,945200
+hand_controller-0.1.49.dist-info/METADATA,sha256=kewprVhyoNCHygemTUXrTyDEEKq7xmb0OcoNGxtbi3o,236
+hand_controller-0.1.49.dist-info/WHEEL,sha256=nTy_Z8ivGEB6qFwVLg7_h6rq0Jt0JU5Pz2cL2_FjSMQ,105
+hand_controller-0.1.49.dist-info/top_level.txt,sha256=4FRHYS8w8asIBVLgMQ0Bh9n0YDpn1ZV6R5D6zE7CEjk,16
+hand_controller-0.1.49.dist-info/RECORD,,

@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>19 · Wrapper 适配层</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 19 章 · Wrapper</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 19 · 环境与算法的桥梁</div>
+  <h1>Wrapper 适配层</h1>
+  <p class="sub">IsaacLab 的 <code>DirectRLEnv</code> 返回 Gymnasium 风格的 dict 观测；PPO 算法期望的是 RSL-RL 风格的 <code>VecEnv</code> 接口。本章精读 <code>GymStyleEnvWrapper</code> 和 <code>vec_env.py</code>，弄清观测字典如何流到 <code>model_act</code>。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>为什么需要 Wrapper？</b> IsaacLab 环境已经很好，但它的 <code>step()</code> 返回 <code>terminated | truncated</code> 两个布尔张量，观测藏在 <code>obs_dict["policy"]</code> 里，还有 <code>priv_info</code>、<code>proprio_hist</code> 等额外键。PPO（源自 RLGames/RSL-RL 传统）期望统一的 <code>VecEnv</code> 接口：<code>dones</code> 合并、<code>extras["observations"]</code> 携带副观测。Wrapper 做这一层「格式翻译」，算法代码不用改。</div>
+
+<div class="glossary">
+  <h4>本章术语表（零基础版）</h4>
+  <dl>
+    <dt>Wrapper（包装器）</dt>
+    <dd>套在环境外面的一层「翻译官」，不改仿真逻辑，只改接口格式。PPO 永远只跟 Wrapper 说话，不直接碰 IsaacLab。</dd>
+    <dt>VecEnv</dt>
+    <dd>向量化环境抽象类：一次 <code>step</code> 同时推进 N 个并行仿真（<code>num_envs</code> 个）。RSL-RL 系算法约定必须实现 <code>reset / step / get_observations</code>。</dd>
+    <dt>obs_dict</dt>
+    <dd>观测字典，键名如 <code>policy</code>、<code>priv_info</code>、<code>proprio_hist</code>。Wrapper 额外加别名 <code>obs</code>，方便 PPO 统一读取。</dd>
+    <dt>terminated / truncated</dt>
+    <dd>Gymnasium 新标准：前者=任务真正失败/成功结束；后者=时间到了被截断。Wrapper 用 <code>|</code> 合并成 <code>dones</code>。</dd>
+    <dt>priv_info（特权信息）</dt>
+    <dd>仿真里才能直接读到的「上帝视角」：物体偏移、质量、摩擦等。真机没有，Stage 2 用 TConv 从历史猜。</dd>
+    <dt>proprio_hist</dt>
+    <dd>过去 30 步的本体感知滑动窗口，形状 <code>(N, 30, 62)</code>。Stage 1 PPO 不用，Stage 2 蒸馏专用。</dd>
+    <dt>clip_actions</dt>
+    <dd>动作裁剪上限，Xhand 默认 1.0。策略采样可能超出范围，Wrapper 在进仿真前 <code>clamp</code>。</dd>
+    <dt>time_outs</dt>
+    <dd>因达到 <code>max_episode_length</code> 被截断的 mask，不是真正失败。PPO 用它做 value bootstrap。</dd>
+  </dl>
+</div>
+
+<h2 id="translator">零、把 Wrapper 想成「两种语言的翻译官」</h2>
+<div class="intuition">
+想象两个部门：<strong>IsaacLab 仿真部</strong>说「Gymnasium 方言」——<code>step</code> 返回五个东西 <code>(obs_dict, reward, terminated, truncated, info)</code>，观测键叫 <code>policy</code>；<strong>PPO 算法部</strong>说「RSL-RL 方言」——要四个东西 <code>(obs, reward, dones, extras)</code>，还要 <code>extras["observations"]</code> 里塞完整副观测。<br><br>
+<code>GymStyleEnvWrapper</code> 就是坐在中间的<strong>同声传译</strong>：仿真部说什么，它翻译成算法部能听懂的格式；算法部下指令，它再翻回去传给仿真。你改 IsaacLab 环境时，只要 Wrapper 这层翻译规则不变，PPO 一行都不用动——这就是 Wrapper 存在的全部理由。
+</div>
+
+<table>
+  <thead><tr><th>IsaacLab 说的（源语言）</th><th>Wrapper 翻译后（目标语言）</th></tr></thead>
+  <tbody>
+    <tr><td><code>obs_dict["policy"]</code></td><td>再加别名 <code>obs_dict["obs"]</code>，PPO 读 <code>self.obs['obs']</code></td></tr>
+    <tr><td><code>terminated</code> 与 <code>truncated</code> 分开</td><td><code>dones = (terminated | truncated).long()</code></td></tr>
+    <tr><td>副观测散落在 dict 各键</td><td><code>extras["observations"] = obs_dict</code> 整包备份</td></tr>
+    <tr><td>无限 horizon 任务的截断</td><td><code>extras["time_outs"] = truncated</code></td></tr>
+    <tr><td>动作可能越界</td><td><code>torch.clamp(actions, ±clip_actions)</code> + 改 Box 边界</td></tr>
+  </tbody>
+</table>
+
+<div class="ask-box">
+  <b>问：为什么不直接改 PPO 去适配 Gymnasium？</b> 可以，但 PPO 代码来自 RLGames/RSL-RL 生态，改算法意味着以后升级 IsaacLab 官方 wrapper 时对不上。改一层 Wrapper 成本最低，也是 IsaacLab 官方推荐做法。
+</div>
+
+<h2 id="where">一、Wrapper 在流水线中的位置</h2>
+<div class="intuition">
+<code>train.py</code> 创建环境后<strong>立刻包一层</strong> <code>GymStyleEnvWrapper</code>，之后 PPO 只跟 wrapper 对话，不再直接接触 IsaacLab 环境。顺序固定：<strong>gym.make → Wrapper → PPO</strong>，中间不能插别的。
+</div>
+
+<span class="code-cap">scripts/train.py · 环境创建</span>
+<pre><code class="lang-py">env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions)
+agent = eval(agent_cfg["algo"])(env, output_dir=log_dir, full_config=config)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 三行 · 逐行 walk-through</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>gym.make(...)</code></td><td>按任务 ID 实例化 IsaacLab 环境（如 Xhand 旋转）。此时还是「Gymnasium 方言」。</td></tr>
+      <tr><td><code>GymStyleEnvWrapper(env, ...)</code></td><td>套上翻译官。构造时还会<strong>主动 reset 一次</strong>——因为 RSL-RL 系 runner 创建后不会自动 reset。</td></tr>
+      <tr><td><code>eval(agent_cfg["algo"])(env, ...)</code></td><td>创建 PPO 或 ProprioAdapt。传入的 <code>env</code> 已是 Wrapper，算法从此只认 VecEnv 接口。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>文件位置：</p>
+<pre><code>rl_isaaclab/wrapper/
+├── vec_env.py                  # 抽象基类 VecEnv（「翻译官岗位说明书」）
+└── sharpa_wave_env_wrapper.py  # 具体实现 GymStyleEnvWrapper（「实际翻译官」）</code></pre>
+
+<h2 id="vec-env">二、VecEnv 抽象接口</h2>
+<p><code>vec_env.py</code> 定义了向量化环境必须实现的三个方法，以及 <code>extras</code> 字典的约定。它本身不干活，只规定「翻译官必须会哪些句式」。</p>
+
+<span class="code-cap">wrapper/vec_env.py · 核心抽象方法</span>
+<pre><code class="lang-py">class VecEnv(ABC):
+    num_envs: int
+    num_actions: int
+    max_episode_length: int | torch.Tensor
+    episode_length_buf: torch.Tensor
+    device: torch.device
+    cfg: dict | object
+
+    @abstractmethod
+    def get_observations(self) -> tuple[torch.Tensor, dict]: ...
+
+    @abstractmethod
+    def reset(self) -> tuple[torch.Tensor, dict]: ...
+
+    @abstractmethod
+    def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+        """返回 (obs, rewards, dones, extras)"""</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">VecEnv 三个抽象方法 · 各自干什么</div>
+  <table>
+    <thead><tr><th>方法</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>reset()</code></td><td>所有并行 env 一起回到 episode 起点。返回当前观测 dict（含 policy / priv_info 等）。</td></tr>
+      <tr><td><code>step(actions)</code></td><td>把形状 <code>(N, 21)</code> 的动作张量送进仿真，推进一步物理，返回 obs、reward、dones、extras。</td></tr>
+      <tr><td><code>get_observations()</code></td><td>只读当前观测、不 step。play 脚本暂停调试时用。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">extras 字典保留键</div>
+  <table>
+    <thead><tr><th>键</th><th>类型</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>"observations"</code></td><td><code>dict[str, Tensor]</code></td><td>副观测：critic、priv_info、proprio_hist 等完整备份</td></tr>
+      <tr><td class="sym-col"><code>"time_outs"</code></td><td><code>Tensor</code></td><td>因超时（非真正终止）结束的 mask，用于 value bootstrap</td></tr>
+      <tr><td class="sym-col"><code>"log"</code></td><td><code>dict</code></td><td>调试/日志标量</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>问：extras 和 obs_dict 有什么区别？</b> <code>step</code> 的第一个返回值就是完整 <code>obs_dict</code>（PPO 赋给 <code>self.obs</code>）。<code>extras["observations"]</code> 是同一份 dict 的副本，供 RSL-RL 生态里其他模块（如 asymmetric critic）按约定读取。本项目 PPO 主要直接用第一个返回值。
+</div>
+
+<h2 id="wrapper-init">三、GymStyleEnvWrapper 初始化</h2>
+<p>构造时从底层环境读取维度信息，修改 action space 裁剪范围，并<strong>主动调用一次 reset</strong>（因为 RSL-RL 风格的 runner 不会在创建后自动 reset）。</p>
+
+<span class="code-cap">sharpa_wave_env_wrapper.py · __init__（节选）</span>
+<pre><code class="lang-py">class GymStyleEnvWrapper(VecEnv):
+    def __init__(self, env, clip_actions):
+        self.env = env
+        self.clip_actions = clip_actions
+
+        self.num_envs = self.unwrapped.num_envs
+        self.device = self.unwrapped.device
+        self.max_episode_length = self.unwrapped.max_episode_length
+        self.prop_hist_len = self.unwrapped.cfg.prop_hist_len
+
+        # 动作维：Xhand = 21
+        self.num_actions = gym.spaces.flatdim(self.unwrapped.single_action_space)
+        # 策略观测维：Xhand = 186
+        self.num_obs = gym.spaces.flatdim(self.unwrapped.single_observation_space["policy"])
+
+        self._modify_action_space()   # 按 clip_actions 改 Box 上下界
+        self.env.reset()              # 构造时立刻 reset 一次</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">__init__ 逐行 · 翻译官上岗 checklist</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>isinstance(env.unwrapped, DirectRLEnv)</code></td><td>类型检查：只接受 IsaacLab 的 DirectRLEnv / ManagerBasedRLEnv，别的 Gym 环境会报错。</td></tr>
+      <tr><td><code>self.num_envs / device</code></td><td>从底层抄并行数与 GPU 设备号，PPO 据此分配张量。</td></tr>
+      <tr><td><code>self.prop_hist_len</code></td><td>历史窗口长度（30），ProprioAdapt 初始化 <code>sa_mean_std</code> 时用。</td></tr>
+      <tr><td><code>flatdim(single_action_space)</code></td><td>单 env 动作维数 → Xhand 21。再 batch 成 <code>(N, 21)</code>。</td></tr>
+      <tr><td><code>flatdim(...["policy"])</code></td><td>策略观测维 → Xhand 186（3 帧 × 62 维单帧）。</td></tr>
+      <tr><td><code>_modify_action_space()</code></td><td>把 Gym Box 的 low/high 改成 <code>±clip_actions</code>，让 PPO 知道合法范围。</td></tr>
+      <tr><td><code>self.env.reset()</code></td><td><strong>关键</strong>：构造完立刻 reset，否则第一次 <code>play_steps</code> 拿到的是未初始化观测。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+初始化末尾那次 <code>reset()</code> 很容易被忽略：RSL-RL 的 <code>train()</code> 里也会 <code>self.obs = self.env.reset()</code>，但 Wrapper 构造时已经 reset 过一次，保证环境内部 buffer（proprio_hist、priv_info 等）处于合法状态。双 reset 无害，第二次 reset 会覆盖为正式训练起点。
+</div>
+
+<h2 id="reset">四、reset()</h2>
+<p>调用底层 <code>env.reset()</code>，拿到 IsaacLab 的观测 dict，添加别名键 <code>"obs"</code> 指向 <code>"policy"</code>，方便 PPO 统一用 <code>obs_dict['obs']</code>。</p>
+
+<span class="code-cap">sharpa_wave_env_wrapper.py · reset</span>
+<pre><code class="lang-py">def reset(self) -> tuple[torch.Tensor, dict]:
+    obs_dict, _ = self.env.reset()
+    obs_dict["obs"] = obs_dict["policy"]   # 别名：PPO 读 obs_dict['obs']
+    return obs_dict</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">reset() 三行 · 翻译过程</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>obs_dict, _ = self.env.reset()</code></td><td>调用 IsaacLab 原生 reset。第二个返回值 info 被丢弃（本项目不用）。</td></tr>
+      <tr><td><code>obs_dict["obs"] = obs_dict["policy"]</code></td><td>加别名：算法侧统一读 <code>obs</code>，不必记 IsaacLab 的 <code>policy</code> 键名。</td></tr>
+      <tr><td><code>return obs_dict</code></td><td>返回整个 dict（不是单独 tensor）。PPO 的 <code>self.obs</code> 就是这个 dict。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>此时 <code>obs_dict</code> 的键来自环境 <code>_get_observations()</code>：</p>
+<span class="code-cap">xhand_wave_env.py · _get_observations</span>
+<pre><code class="lang-py">def _get_observations(self) -> dict:
+    obs = self.compute_observations()      # shape (num_envs, 186)
+    return {
+        "policy": obs,
+        "priv_info": self.priv_info_buf,    # shape (num_envs, 8)
+        "proprio_hist": self.proprio_hist_buf,  # shape (num_envs, 30, 62)
+    }</code></pre>
+
+<div class="ask-box">
+  <b>问：为什么 reset 返回 dict 而不是 (obs, info) 元组？</b> 这是 RSL-RL VecEnv 约定，不是 Gymnasium 标准。PPO 代码写死了 <code>self.obs['obs']</code> 这种访问方式；Wrapper 负责把 IsaacLab 的输出「翻译」成这种形状。
+</div>
+
+<h2 id="step">五、step() 与 clip_actions</h2>
+
+<h3 id="clip">1. 动作裁剪</h3>
+<p>策略网络输出未经约束的高斯采样动作，wrapper 在送入仿真前用 <code>torch.clamp</code> 限制到 <code>[-clip_actions, +clip_actions]</code>（Xhand 默认 <code>clip_actions = 1.0</code>）。</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py · step 前半</span>
+<pre><code class="lang-py">def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+    if self.clip_actions is not None:
+        actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+    obs_dict, rew, terminated, truncated, extras = self.env.step(actions)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">step() 前半 · 动作进仿真前</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>torch.clamp(actions, ...)</code></td><td>把每个关节指令夹到 [-1, 1]。高斯采样可能到 ±3，不 clamp 会触发仿真异常或饱和。</td></tr>
+      <tr><td><code>self.env.step(actions)</code></td><td>调用 IsaacLab 五步返回：<code>obs_dict, rew, terminated, truncated, extras</code>（Gymnasium 方言）。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>初始化时同步修改了 Gym action space 的 Box 边界，让 PPO 知道合法范围：</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py · _modify_action_space</span>
+<pre><code class="lang-py">self.env.unwrapped.single_action_space = gym.spaces.Box(
+    low=-self.clip_actions, high=self.clip_actions, shape=(self.num_actions,)
+)
+self.env.unwrapped.action_space = gym.vector.utils.batch_space(
+    self.env.unwrapped.single_action_space, self.num_envs
+)</code></pre>
+
+<h3 id="dones-extras">2. dones 合并与 extras 填充</h3>
+<span class="code-cap">sharpa_wave_env_wrapper.py · step 后半</span>
+<pre><code class="lang-py">    dones = (terminated | truncated).to(dtype=torch.long)
+    obs_dict["obs"] = obs_dict["policy"]
+    extras["observations"] = obs_dict          # 完整观测 dict 塞进 extras
+    if not self.unwrapped.cfg.is_finite_horizon:
+        extras["time_outs"] = truncated        # 超时 mask → value bootstrap
+    return obs_dict, rew, dones, extras</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">step() 后半 · 翻译回 RSL-RL 方言</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>dones = (terminated | truncated).long()</code></td><td>两个 bool 合并成一个 long 张量。任一为 True → done=1。</td></tr>
+      <tr><td><code>obs_dict["obs"] = obs_dict["policy"]</code></td><td>每步都加别名，与 reset 一致。</td></tr>
+      <tr><td><code>extras["observations"] = obs_dict</code></td><td>整包观测备份进 extras，RSL-RL 约定格式。</td></tr>
+      <tr><td><code>extras["time_outs"] = truncated</code></td><td>仅无限 horizon 任务（手内旋转）。截断≠失败，PPO 要据此 bootstrap 价值。</td></tr>
+      <tr><td><code>return obs_dict, rew, dones, extras</code></td><td>四元组返回。注意第一个仍是 dict，不是 tensor。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>注意：wrapper 的 <code>step</code> 返回的第一个值是<strong>完整 obs_dict</strong>（不是单独的 policy tensor），PPO 直接把它赋给 <code>self.obs</code>。</p>
+
+<div class="ask-box">
+  <b>问：PPO 里又 clamp 一次 actions，和 Wrapper 重复吗？</b> 略有冗余但无害。Wrapper 保证进仿真的动作合法；PPO 在 <code>play_steps</code> 里再 clamp 到 [-1,1] 是历史习惯，与 <code>clip_actions=1.0</code> 时效果相同。
+</div>
+
+<h2 id="extras-obs">六、三类「额外观测」详解</h2>
+
+<div class="symtable">
+  <div class="symtitle">obs_dict 各键在训练中的角色</div>
+  <table>
+    <thead><tr><th>键</th><th>Shape (Xhand)</th><th>内容</th><th>谁消费</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="sym-col"><code>obs</code> / <code>policy</code></td>
+        <td>(N, 186)</td>
+        <td>3 帧堆叠的本体感知：关节角、目标、接触、接触位置</td>
+        <td>PPO Actor / Critic 主输入</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><code>priv_info</code></td>
+        <td>(N, 8)</td>
+        <td>特权信息：物体相对位移、摩擦、质量、质心偏移等（仿真专属）</td>
+        <td>Stage 1 PPO 的 <code>env_mlp</code> 嵌入</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><code>proprio_hist</code></td>
+        <td>(N, 30, 62)</td>
+        <td>过去 30 步的单帧 proprio（186÷3=62）滑动窗口</td>
+        <td>Stage 2 ProprioAdapt 的 <code>adapt_tconv</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+可以把 obs_dict 想成<strong>三个信封</strong>一起递给 PPO：<code>obs</code> 是「当前看到的」（主信）；<code>priv_info</code> 是「上帝小抄」（仅仿真有）；<code>proprio_hist</code> 是「过去 30 帧日记」（Stage 2 才拆封）。Wrapper 不做内容修改，只保证三个信封都送到、且贴上 <code>obs</code> 统一标签。
+</div>
+
+<h3 id="priv-info">priv_info 来源</h3>
+<p>环境在 <code>compute_observations()</code> 末尾更新：</p>
+<span class="code-cap">xhand_wave_env.py</span>
+<pre><code class="lang-py">self.priv_info_buf[:, 0:3] = self.object_pos - self.object_default_pose[:, :3]  # 物体偏移
+# reset 时若开启域随机化，还会写入摩擦、质量、质心：
+self.priv_info_buf[:, 3] = rand_friction
+self.priv_info_buf[:, 4] = mass
+self.priv_info_buf[:, 5:8] = com_offset</code></pre>
+
+<h3 id="proprio-hist">proprio_hist 来源</h3>
+<span class="code-cap">xhand_wave_env.py</span>
+<pre><code class="lang-py">self.proprio_hist_buf[:] = self.obs_buf_lag_history[:, -self.cfg.prop_hist_len:].clone()
+# prop_hist_len = 30，每步滚动更新</code></pre>
+
+<p>Stage 1 PPO <strong>不用</strong> <code>proprio_hist</code>；Stage 2 ProprioAdapt 用 TConv 从 proprio 历史「猜」priv_info（见<a href="06-rma-distillation.html">第 06 章</a>、<a href="21-networks-padapt.html">第 21 章</a>）。</p>
+
+<h2 id="data-flow">七、数据流：IsaacLab obs dict → PPO model_act</h2>
+
+<div class="intuition">
+一步训练采集的数据路径：<strong>环境算观测 → wrapper 打包 → PPO 存 rollout → model_act 喂网络</strong>。关键是 wrapper 返回的 obs_dict 被 PPO 原样持有，<code>model_act</code> 从中拆出 <code>obs</code> 和 <code>priv_info</code>。
+</div>
+
+<pre><code>IsaacLab DirectRLEnv
+  │
+  │  _get_observations() → {"policy", "priv_info", "proprio_hist"}
+  │
+  ▼
+GymStyleEnvWrapper
+  │
+  │  reset()/step(): 添加 obs_dict["obs"] = obs_dict["policy"]
+  │                  extras["observations"] = obs_dict
+  │                  extras["time_outs"] = truncated (若无限 horizon)
+  │
+  ▼
+PPO.play_steps()
+  │
+  │  model_act(self.obs)          ← self.obs 就是 wrapper 返回的 obs_dict
+  │  env.step(actions)            ← 返回新 obs_dict 赋回 self.obs
+  │  storage.update_data('obses', ..., self.obs['obs'])
+  │  storage.update_data('priv_info', ..., self.obs['priv_info'])
+  │
+  ▼
+ActorCritic.act(input_dict)
+  │
+  │  env_mlp(priv_info) → extrin → cat 到 obs → actor_mlp → 动作分布</code></pre>
+
+<h3 id="ppo-reset">PPO 启动时</h3>
+<span class="code-cap">algo/ppo/ppo.py · train()</span>
+<pre><code class="lang-py">self.obs = self.env.reset()   # obs_dict，含 obs / priv_info / proprio_hist</code></pre>
+
+<h3 id="ppo-play">每步采集</h3>
+<span class="code-cap">algo/ppo/ppo.py · play_steps()</span>
+<pre><code class="lang-py">for n in range(self.horizon_length):
+    res_dict = self.model_act(self.obs)
+    self.storage.update_data('obses', n, self.obs['obs'])
+    self.storage.update_data('priv_info', n, self.obs['priv_info'])
+    ...
+    actions = torch.clamp(res_dict['actions'], -1.0, 1.0)
+    self.obs, rewards, self.dones, infos = self.env.step(actions)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">play_steps 循环内 · Wrapper 参与的部分</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>self.model_act(self.obs)</code></td><td>读 <code>self.obs['obs']</code> 和 <code>['priv_info']</code>——这两个键都是 Wrapper 保证存在的。</td></tr>
+      <tr><td><code>self.env.step(actions)</code></td><td>这里的 <code>self.env</code> 实际是 Wrapper。内部 clamp → IsaacLab step → 翻译 dones/extras。</td></tr>
+      <tr><td><code>self.obs, rewards, self.dones, infos = ...</code></td><td>新 obs_dict 覆盖 <code>self.obs</code>；<code>infos</code> 即 extras，含 <code>time_outs</code>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="model-act">model_act 拆包</h3>
+<span class="code-cap">algo/ppo/ppo.py · model_act</span>
+<pre><code class="lang-py">def model_act(self, obs_dict):
+    processed_obs = self.running_mean_std(obs_dict['obs'])   # 归一化 186 维
+    input_dict = {
+        'obs': processed_obs,
+        'priv_info': obs_dict['priv_info'],                # 8 维特权
+    }
+    res_dict = self.model.act(input_dict)
+    return res_dict</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">model_act · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>obs_dict['obs']</code></td><td>186 维策略观测，Wrapper 别名键。若漏加别名，这里 KeyError。</td></tr>
+      <tr><td><code>running_mean_std(...)</code></td><td>在线归一化，减均值除标准差。eval 模式采样时不更新统计量。</td></tr>
+      <tr><td><code>priv_info</code></td><td>8 维特权，环境每步写入，Wrapper 原样传递。</td></tr>
+      <tr><td><code>self.model.act(...)</code></td><td>Actor 采样动作 + Critic 估价值。返回 actions, neglogp, values 等。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="actor-critic">ActorCritic 拼接 priv_info</h3>
+<span class="code-cap">algo/models/models.py · _actor_critic (Stage 1)</span>
+<pre><code class="lang-py">if self.priv_info:
+    extrin = self.env_mlp(obs_dict['priv_info'])   # 8 → priv_mlp 最后一维
+    extrin = torch.tanh(extrin)
+    obs = torch.cat([obs, extrin], dim=-1)         # 拼到 policy obs 后面
+# → actor_mlp(obs) → mu, sigma</code></pre>
+
+<h2 id="compare">八、与标准 Gymnasium 接口的差异</h2>
+<table>
+  <thead><tr><th>项</th><th>标准 Gymnasium</th><th>本项目 Wrapper + PPO</th></tr></thead>
+  <tbody>
+    <tr><td>reset 返回值</td><td><code>(obs, info)</code></td><td>整个 <code>obs_dict</code>（含多键）</td></tr>
+    <tr><td>step 返回值</td><td><code>obs, reward, terminated, truncated, info</code></td><td><code>obs_dict, reward, dones, extras</code></td></tr>
+    <tr><td>done 信号</td><td>两个 bool</td><td>合并为 <code>dones: LongTensor</code></td></tr>
+    <tr><td>副观测</td><td>放在 <code>info</code></td><td><code>obs_dict</code> 直接携带 + <code>extras["observations"]</code> 备份</td></tr>
+    <tr><td>动作裁剪</td><td>环境内部或策略侧</td><td>wrapper <code>clamp</code> + 改 action_space</td></tr>
+    <tr><td>构造后 reset</td><td>由调用方决定</td><td>Wrapper <code>__init__</code> 末尾自动 reset 一次</td></tr>
+  </tbody>
+</table>
+
+<h2 id="get-obs">九、get_observations() 辅助方法</h2>
+<p>除 <code>reset/step</code> 外，wrapper 还提供 <code>get_observations()</code>，供需要「只读当前观测、不 step」的场景（如 play 脚本中途暂停）：</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py</span>
+<pre><code class="lang-py">def get_observations(self) -> tuple[torch.Tensor, dict]:
+    obs_dict = self.unwrapped._get_observations()
+    return obs_dict["policy"], {"observations": obs_dict}</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">get_observations · 与 reset 的区别</div>
+  <table>
+    <thead><tr><th>方法</th><th>是否改环境状态</th><th>返回值</th></tr></thead>
+    <tbody>
+      <tr><td><code>reset()</code></td><td>是，episode 重启</td><td>完整 obs_dict（含 obs 别名）</td></tr>
+      <tr><td><code>get_observations()</code></td><td>否，只读当前帧</td><td><code>(policy_tensor, {"observations": obs_dict})</code></td></tr>
+      <tr><td><code>step()</code></td><td>是，推进一步物理</td><td>四元组 obs_dict, rew, dones, extras</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="episode-buf">十、episode_length_buf 与随机 episode 长度</h2>
+<p>RSL-RL 支持随机初始化 episode 长度（curriculum 技巧）。Wrapper 暴露 setter，直接写底层 env：</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py · episode_length_buf</span>
+<pre><code class="lang-py">@property
+def episode_length_buf(self) -> torch.Tensor:
+    return self.unwrapped.episode_length_buf
+
+@episode_length_buf.setter
+def episode_length_buf(self, value: torch.Tensor):
+    self.unwrapped.episode_length_buf = value</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">episode_length_buf · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>@property getter</code></td><td>读当前每个 env 已走步数，shape (N,)。</td></tr>
+      <tr><td><code>@setter</code></td><td>允许 PPO runner 随机设初始 episode 进度，实现「从 episode 中段开始」的数据增强。</td></tr>
+      <tr><td><code>self.unwrapped.xxx</code></td><td>透传到底层 IsaacLab env，Wrapper 本身不存副本。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="zero-close">十一、zero_actions 与 close</h2>
+<span class="code-cap">sharpa_wave_env_wrapper.py</span>
+<pre><code class="lang-py">def zero_actions(self) -> torch.Tensor:
+    return torch.zeros(self.action_space.shape, device=self.device, dtype=torch.float)
+
+def close(self):
+    return self.env.close()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">辅助方法 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>zero_actions()</code></td><td>返回全零动作张量，shape (N, 21)，device 与 env 一致。调试或 pause 时用。</td></tr>
+      <tr><td><code>close()</code></td><td>关闭 Isaac Sim 会话，train.py 末尾 <code>env.close()</code> 调用。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="stage2-wrapper">十二、Stage 2 蒸馏时 Wrapper 有变化吗？</h2>
+<div class="intuition">
+<strong>没有。</strong> ProprioAdapt 同样用 <code>GymStyleEnvWrapper</code> 包环境。区别在算法侧：<code>padapt.train()</code> 的 input_dict 多了 <code>proprio_hist</code>，但 Wrapper 的 step/reset 行为与 Stage 1 完全一致——仍然返回含 <code>priv_info</code> 的 obs_dict（仿真里 priv 当 label）、仍然合并 dones、仍然写 time_outs。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">Stage 1 vs Stage 2 · Wrapper 侧对比</div>
+  <table>
+    <thead><tr><th>项</th><th>Stage 1 PPO</th><th>Stage 2 ProprioAdapt</th></tr></thead>
+    <tbody>
+      <tr><td>Wrapper 类</td><td>GymStyleEnvWrapper</td><td>相同</td></tr>
+      <tr><td>step 返回值</td><td>obs_dict, rew, dones, extras</td><td>相同</td></tr>
+      <tr><td>算法读哪些键</td><td>obs, priv_info</td><td>obs, priv_info, proprio_hist</td></tr>
+      <tr><td>clip_actions</td><td>env_cfg.clip_actions</td><td>相同</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="faq">十三、常见问题 FAQ</h2>
+
+<div class="ask-box">
+  <b>问：Wrapper 会拖慢训练吗？</b> 几乎不会。它只是几次张量操作（clamp、别名、布尔合并），耗时相对 PhysX 物理可忽略。
+</div>
+
+<div class="ask-box">
+  <b>问：我能跳过 Wrapper 直接用 IsaacLab 环境吗？</b> 可以写新算法适配 Gymnasium 五步 API，但现有 PPO / ProprioAdapt 都写死了 VecEnv 接口，跳过 Wrapper 等于重写算法入口。
+</div>
+
+<div class="ask-box">
+  <b>问：proprio_hist 在 Stage 1 占显存吗？</b> 占。环境每步都维护 <code>(N, 30, 62)</code> buffer，但 PPO 的 <code>model_act</code> 不读它。这是为 Stage 2 蒸馏预留的数据，避免换阶段时改环境。
+</div>
+
+<div class="ask-box">
+  <b>问：文件名为什么叫 sharpa_wave_env_wrapper？</b> 历史命名，从 SharpaWave 模板继承。Xhand 任务同样使用这个 Wrapper，无需另写。
+</div>
+
+<h2 id="dtype">十四、张量 dtype 与 device 约定</h2>
+<div class="symtable">
+  <div class="symtitle">Wrapper 边界上的 dtype</div>
+  <table>
+    <thead><tr><th>张量</th><th>dtype</th><th>device</th></tr></thead>
+    <tbody>
+      <tr><td>actions 输入 step</td><td>float32</td><td>与 env 相同（通常 cuda:0）</td></tr>
+      <tr><td>obs_dict 各值</td><td>float32</td><td>GPU，IsaacLab 直接写 CUDA tensor</td></tr>
+      <tr><td>dones</td><td>int64 (long)</td><td>GPU；RLGames 传统用 long 而非 bool</td></tr>
+      <tr><td>rewards</td><td>float32</td><td>GPU，(N,) 或 (N,1) 视 PPO unsqueeze</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>问：dones 为什么是 long 不是 bool？</b> 历史 RLGames/RSL-RL 代码用 0/1 整数与 float 做 <code>1.0 - dones</code> 运算。Wrapper 用 <code>.to(dtype=torch.long)</code> 保持兼容。
+</div>
+
+<div class="ask-box"> Gym 的 <code>observation_space</code> 描述 <code>policy</code> 键的 Box shape (186,)。但 PPO 实际用的是 wrapper 返回的<strong>整个 dict</strong>，不是 gym.spaces 里注册的 flat tensor。别被 <code>self.env.observation_space</code> 迷惑——它主要用于 PPO 读 shape[1] 定 obs_dim。
+</div>
+
+<h2 id="read-order">十五、推荐阅读顺序</h2>
+<ol>
+  <li>先读本章「翻译官」类比，建立 Wrapper 在流水线中的位置</li>
+  <li>打开 <code>sharpa_wave_env_wrapper.py</code>，对照 walk-table 看 reset/step</li>
+  <li>用 grep 在 <code>ppo.py</code> 搜 <code>self.env.step</code>，确认 PPO 只接触 Wrapper</li>
+  <li>继续<a href="20-ppo-training-loop.html">第 20 章</a>看 play_steps 如何使用 <code>self.obs['obs']</code></li>
+</ol>
+
+<div class="symtable">
+  <div class="symtitle">本章代码文件速查</div>
+  <table>
+    <thead><tr><th>文件</th><th>行数级</th><th>必读方法</th></tr></thead>
+    <tbody>
+      <tr><td><code>vec_env.py</code></td><td>~100</td><td>抽象接口文档</td></tr>
+      <tr><td><code>sharpa_wave_env_wrapper.py</code></td><td>~200</td><td>__init__, reset, step, get_observations</td></tr>
+      <tr><td><code>scripts/train.py</code></td><td>~118</td><td>gym.make + Wrapper 两行</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>问：clip_actions=None 时会怎样？</b> <code>_modify_action_space</code> 直接 return，不 clamp 动作也不改 Box。Xhand 默认 cfg 里 clip_actions=1.0，一般不设 None。
+</div>
+
+<div class="ask-box">
+  <b>问：extras 里还会有别的键吗？</b> IsaacLab 环境可能在 info/extras 里放日志标量（如 episode reward）。PPO play_steps 末尾会把 float/int 标量抄进 <code>self.extra_info</code> 写 TensorBoard。Wrapper 不过滤这些键，原样传递。
+</div>
+
+<div class="ask-box">
+  <b>问：ManagerBasedRLEnv 和 DirectRLEnv 都能包吗？</b> 能。Wrapper 的 type check 接受两者。本项目 Xhand 任务用 DirectRLEnv；若观测来自 observation_manager，<code>get_observations</code> 会走 <code>observation_manager.compute()</code> 分支。
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？（无需 Isaac Sim）</summary>
+  <div class="tryit-body">
+    <p>静态检查 wrapper 接口：</p>
+    <pre><code>cd /media/user/Data/Robotera/era_dexhand_lab
+python -c "
+from rl_isaaclab.wrapper.sharpa_wave_env_wrapper import GymStyleEnvWrapper
+from rl_isaaclab.wrapper.vec_env import VecEnv
+print('GymStyleEnvWrapper bases:', GymStyleEnvWrapper.__mro__[1:3])
+print('abstract methods:', [m for m in dir(VecEnv) if not m.startswith('_')])
+"</code></pre>
+    <p>应看到 <code>GymStyleEnvWrapper</code> 继承 <code>VecEnv</code>，抽象方法含 <code>reset</code>、<code>step</code>、<code>get_observations</code>。</p>
+  </div>
+</details>
+
+<div class="tip">
+<b>本章小结。</b> <code>VecEnv</code> 定义算法期望的向量化接口；<code>GymStyleEnvWrapper</code> 像<strong>两种语言的翻译官</strong>，把 IsaacLab 环境翻译成该接口：<code>reset/step</code> 添加 <code>obs</code> 别名、合并 <code>dones</code>、裁剪动作、把完整 obs dict 塞进 <code>extras</code>。PPO 的 <code>self.obs</code> 就是这份 dict，<code>model_act</code> 读取 <code>obs</code>（186 维策略输入）和 <code>priv_info</code>（8 维特权嵌入）；<code>proprio_hist</code> 留给 ProprioAdapt。下一章进入 PPO 训练循环本体。</div>
+
+<div class="pager">
+  <a href="18-grasp-cache.html"><div class="dir">← 上一章</div><div class="ttl">18 · 抓取缓存 gen_grasp</div></a>
+  <a class="next" href="20-ppo-training-loop.html"><div class="dir">下一章 →</div><div class="ttl">20 · PPO 训练循环</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 19 章 · Wrapper 适配层</footer>
+</body>
+</html>

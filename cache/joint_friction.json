@@ -1,0 +1,107 @@
+{
+  "index_mcp0": {
+    "breakaway_Nm": 0.108,
+    "read_Nm": 0.047,
+    "vel_rad_s": 0.441
+  },
+  "ltspalm": {
+    "breakaway_Nm": 0.3,
+    "read_Nm": 0.252,
+    "vel_rad_s": 0.144
+  },
+  "mid_mcp0": {
+    "breakaway_Nm": 0.144,
+    "read_Nm": 0.079,
+    "vel_rad_s": 0.407
+  },
+  "ring_mcp0": {
+    "breakaway_Nm": 0.188,
+    "read_Nm": 0.127,
+    "vel_rad_s": 0.561
+  },
+  "thumb_mcp0": {
+    "breakaway_Nm": 0.224,
+    "read_Nm": 0.144,
+    "vel_rad_s": 0.268
+  },
+  "index_mcp1": {
+    "breakaway_Nm": 0.16,
+    "read_Nm": 0.074,
+    "vel_rad_s": 0.604
+  },
+  "pinky_mcp0": {
+    "breakaway_Nm": 0.168,
+    "read_Nm": 0.113,
+    "vel_rad_s": 0.556
+  },
+  "mid_mcp1": {
+    "breakaway_Nm": 0.148,
+    "read_Nm": 0.062,
+    "vel_rad_s": 0.594
+  },
+  "ring_mcp1": {
+    "breakaway_Nm": 0.14,
+    "read_Nm": 0.067,
+    "vel_rad_s": 0.182
+  },
+  "thumb_mcp1": {
+    "breakaway_Nm": 0.112,
+    "read_Nm": 0.039,
+    "vel_rad_s": 0.551
+  },
+  "index_pip": {
+    "breakaway_Nm": 0.136,
+    "read_Nm": 0.073,
+    "vel_rad_s": 0.177
+  },
+  "pinky_mcp1": {
+    "breakaway_Nm": 0.136,
+    "read_Nm": 0.064,
+    "vel_rad_s": 0.508
+  },
+  "mid_pip": {
+    "breakaway_Nm": 0.128,
+    "read_Nm": 0.049,
+    "vel_rad_s": 0.753
+  },
+  "ring_pip": {
+    "breakaway_Nm": 0.1,
+    "read_Nm": 0.045,
+    "vel_rad_s": 0.331
+  },
+  "thumb_pip": {
+    "breakaway_Nm": 0.084,
+    "read_Nm": 0.032,
+    "vel_rad_s": 0.532
+  },
+  "index_dip": {
+    "breakaway_Nm": 0.1,
+    "read_Nm": 0.037,
+    "vel_rad_s": 0.393
+  },
+  "pinky_pip": {
+    "breakaway_Nm": 0.116,
+    "read_Nm": 0.045,
+    "vel_rad_s": 0.575
+  },
+  "mid_dip": {
+    "breakaway_Nm": 0.124,
+    "read_Nm": 0.056,
+    "vel_rad_s": 0.417
+  },
+  "ring_dip": {
+    "breakaway_Nm": 0.128,
+    "read_Nm": 0.051,
+    "vel_rad_s": 0.24
+  },
+  "thumb_dip": {
+    "breakaway_Nm": 0.112,
+    "read_Nm": 0.063,
+    "vel_rad_s": 0.508
+  },
+  "pinky_dip": {
+    "breakaway_Nm": 0.092,
+    "read_Nm": 0.035,
+    "vel_rad_s": 0.575
+  }
+}

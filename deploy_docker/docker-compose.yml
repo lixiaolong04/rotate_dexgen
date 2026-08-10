@@ -1,0 +1,25 @@
+# Xhand 部署容器 —— 仿 rl_isaaclab/utils/docker-compose.yml(SharpaWave), Xhand 适配。
+# 差异: 去掉 nvidia runtime(Xhand 触觉是 taxel 阵列, 推理 CPU 即可); 串口设备靠 privileged 透传。
+#
+# 用法:
+#   先 ./build.sh 构建镜像 xhand-deploy:22.04
+#   xhost +local:root                       # 允许容器访问 X11(键盘 e/w/q 需要)
+#   docker compose -f deploy_docker/docker-compose.yml up -d
+#   docker exec -it xhand_deploy bash
+# 容器内即可跑 plan 的 Phase B(键盘默认开: e=启动 w=冻结 q=回零; 或加 --no_keyboard 自动跑)。
+services:
+  xhand_deploy:
+    image: xhand-deploy:22.04
+    container_name: xhand_deploy
+    working_dir: /workspace
+    network_mode: host          # 串口够用; 若二期改 EtherCAT 也需要 host 网络
+    privileged: true            # 透传串口/USB(/dev/ttyUSB*); 仿 SharpaWave(它也 privileged)
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix       # 键盘(pynput)需要 X11
+      - ..:/workspace                        # 整个仓库(deploy_docker 的上一级 = 项目根)
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - PYTHONPATH=/workspace
+    stdin_open: true
+    tty: true

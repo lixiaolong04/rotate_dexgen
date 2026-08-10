@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>21 · 网络与 ProprioAdapt</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 21 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 21 · algo/models/ + algo/padapt/</div>
+  <h1>网络与 ProprioAdapt</h1>
+  <p class="sub"><code>ActorCritic</code> 如何把 186 维观测变成 21 维动作？Stage 2 如何<strong>冻结教师、只训 TConv</strong>？本章对照 <code>models.py</code>、<code>running_mean_std.py</code>、<code>padapt.py</code>，衔接<a href="06-rma-distillation.html">06</a>、<a href="07-tconv-network.html">07</a>、<a href="08-normalization.html">08</a>三章原理。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>两阶段共用一套 <code>ActorCritic</code> 类。</b> 差别只在构造参数 <code>proprio_adapt</code>：Stage 1（PPO）为 <code>False</code>，走 <code>env_mlp(priv_info)</code>；Stage 2（ProprioAdapt）为 <code>True</code>，走 <code>adapt_tconv(proprio_hist)</code>。主干 MLP、Actor 头、Critic 头结构相同。</div>
+
+<div class="glossary">
+  <h4>本章术语表</h4>
+  <dl>
+    <dt>ActorCritic</dt>
+    <dd>策略网络（Actor 输出动作 μ）+ 价值网络（Critic 输出 V）合体类。共享前半段特征提取。</dd>
+    <dt>env_mlp</dt>
+    <dd>把 8 维 priv_info 编码成 8 维隐变量 z 的小 MLP。Stage 1 训练；Stage 2 冻结，只当 label。</dd>
+    <dt>adapt_tconv（ProprioAdaptTConv）</dt>
+    <dd>时序卷积网络：输入 (N,30,62) 历史 → 输出 (N,8) 估计 ẑ。Stage 2 <strong>唯一训练</strong>的模块。</dd>
+    <dt>extrin / z / ẑ</dt>
+    <dd>拼到 obs 后面的 8 维「环境上下文」向量。z=教师真值（priv_info 来）；ẑ=学生猜测（历史来）。</dd>
+    <dt>requires_grad=False</dt>
+    <dd>冻结参数：forward 还算，backward 不更新。Stage 2 除 adapt_tconv 外全部冻结。</dd>
+    <dt>strict=False</dt>
+    <dd>load checkpoint 时允许缺少键。Stage 1 ckpt 无 adapt_tconv 权重，随机初始化后开训。</dd>
+    <dt>sa_mean_std</dt>
+    <dd>对 proprio_hist (30×62) 逐元素在线归一化。Stage 2 训练更新，部署 eval 冻结。</dd>
+    <dt>act vs act_inference</dt>
+    <dd>前者高斯采样（训练探索）；后者只返回 μ（部署/蒸馏控手）。</dd>
+  </dl>
+</div>
+
+<h2 id="brain">零、把神经网络想成「大脑分区」</h2>
+<div class="intuition">
+<code>ActorCritic</code> 不是一团黑箱，可以按<strong>脑区</strong>理解：<br>
+• <strong>感觉皮层</strong> — <code>running_mean_std</code>：把 raw 观测归一化到网络熟悉的尺度。<br>
+• <strong>海马体 / 小抄区</strong> — <code>env_mlp(priv_info)</code>：Stage 1 直接读「上帝小抄」z；真机没有这区。<br>
+• <strong>工作记忆区</strong> — <code>adapt_tconv(proprio_hist)</code>：Stage 2 从 30 帧历史<strong>猜</strong>小抄 ẑ，替代 env_mlp。<br>
+• <strong>运动皮层</strong> — <code>actor_mlp → mu</code>：综合 obs+z 后输出 21 维关节指令。<br>
+• <strong>评估区</strong> — <code>value head</code>：估计「这状态有多好」，仅 Stage 1 PPO 训练用。<br>
+• <strong>噪声发生器</strong> — 可学习 <code>sigma</code>：训练时加探索，部署时不用。<br><br>
+Stage 2 蒸馏 = <strong>只练工作记忆区</strong>（adapt_tconv），其他脑区全部冻结，继续用 Stage 1 练好的运动皮层转笔。
+</div>
+
+<div class="ask-box">
+  <b>问：为什么 Stage 2 叫「只练小抄模块」？</b> env_mlp 读的是仿真 priv_info（质量、摩擦等），真机没有。TConv 的任务是只看 proprio 历史，输出与 env_mlp 尽量一样的 8 个数，让冻结的 actor_mlp「以为」小抄还在——这就是 RMA 蒸馏的核心。
+</div>
+
+<h2 id="actor-critic">一、ActorCritic 总览</h2>
+<div class="intuition">
+可以把 ActorCritic 想成"两条入口汇一条河"：<strong>观测 obs</strong> 始终进入；第二条入口要么是<strong>上帝小抄 z</strong>（特权编码），要么是<strong>学生猜的 ẑ</strong>（历史编码）。拼在一起后，一条 MLP 河分出两个出口：Actor 输出动作均值 μ，Critic 输出标量价值 V。
+</div>
+
+<span class="code-cap">models.py · __init__（结构）</span>
+<pre><code class="lang-py">class ActorCritic(nn.Module):
+    def __init__(self, kwargs):
+        actions_num = kwargs.pop('actions_num')       # 21
+        input_shape = kwargs.pop('input_shape')       # (186,)
+        self.units = kwargs.pop('actor_units')        # [512, 256, 128]
+        self.priv_mlp = kwargs.pop('priv_mlp_units')  # [256, 128, 8]
+        self.priv_info = kwargs['priv_info']
+        self.priv_info_stage2 = kwargs['proprio_adapt']
+
+        if self.priv_info:
+            self.env_mlp = MLP(self.priv_mlp, input_size=priv_info_dim)  # 8→8
+            if self.priv_info_stage2:
+                self.adapt_tconv = ProprioAdaptTConv(input_shape[0] // 3)  # 62 维单帧
+
+        self.actor_mlp = MLP(self.units, input_size=186 + 8)  # 194 维进主干
+        self.value = nn.Linear(out_size, 1)
+        self.mu = nn.Linear(out_size, actions_num)
+        self.sigma = nn.Parameter(torch.zeros(actions_num))   # 全局可学习 log-std</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">ActorCritic.__init__ · 脑区对照</div>
+  <table>
+    <thead><tr><th>代码</th><th>脑区类比</th><th>维度</th></tr></thead>
+    <tbody>
+      <tr><td><code>env_mlp</code></td><td>小抄区（priv_info → z）</td><td>8 → [256,128,8]</td></tr>
+      <tr><td><code>adapt_tconv</code></td><td>工作记忆（仅 Stage 2）</td><td>(N,30,62) → (N,8)</td></tr>
+      <tr><td><code>actor_mlp</code></td><td>运动规划主干</td><td>194 → [512,256,128]</td></tr>
+      <tr><td><code>self.mu</code></td><td>运动输出</td><td>128 → 21</td></tr>
+      <tr><td><code>self.value</code></td><td>价值评估</td><td>128 → 1</td></tr>
+      <tr><td><code>self.sigma</code></td><td>探索噪声（标量 broadcast）</td><td>21 维共享同一 σ</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">Xhand 维度速查</div>
+  <table>
+    <thead><tr><th>张量</th><th>shape</th><th>来源</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">obs</td><td>(N, 186)</td><td>3 帧 × 62 维本体观测拼接</td></tr>
+      <tr><td class="sym-col">priv_info</td><td>(N, 8)</td><td>物体相对位姿、质量、摩擦、COM（仅仿真）</td></tr>
+      <tr><td class="sym-col">proprio_hist</td><td>(N, 30, 62)</td><td>最近 30 帧单帧向量（Stage 2 / 部署）</td></tr>
+      <tr><td class="sym-col">z 或 ẑ</td><td>(N, 8)</td><td><code>tanh</code> 后的隐变量，拼到 obs 后</td></tr>
+      <tr><td class="sym-col">actor_mlp 输入</td><td>(N, 194)</td><td>186 + 8</td></tr>
+      <tr><td class="sym-col">μ, action</td><td>(N, 21)</td><td>高斯策略均值 / 采样动作</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="paths">二、<code>_actor_critic()</code>：Stage 1 vs Stage 2 数据路径</h2>
+
+<h3 id="stage1-path">2.1 Stage 1（PPO 教师）</h3>
+<span class="code-cap">models.py · _actor_critic · proprio_adapt=False</span>
+<pre><code class="lang-py">extrin = self.env_mlp(obs_dict['priv_info'])
+extrin = torch.tanh(extrin)
+obs = torch.cat([obs, extrin], dim=-1)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">Stage 1 路径 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>env_mlp(priv_info)</code></td><td>8 维特权 → 8 维 embedding。仿真「上帝视角」直接喂入。</td></tr>
+      <tr><td><code>torch.tanh(extrin)</code></td><td>压到 (-1,1)，防止 embedding 爆炸。</td></tr>
+      <tr><td><code>cat([obs, extrin], -1)</code></td><td>186+8=194 维进 actor_mlp。策略「看到」物体质量摩擦等间接信息。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="stage2-path">2.2 Stage 2（ProprioAdapt 学生）</h3>
+<span class="code-cap">models.py · _actor_critic · proprio_adapt=True</span>
+<pre><code class="lang-py">extrin    = self.adapt_tconv(obs_dict['proprio_hist'])     # ẑ：学生估计
+extrin_gt = self.env_mlp(obs_dict['priv_info'])            # z：教师真值
+extrin_gt = torch.tanh(extrin_gt)
+extrin    = torch.tanh(extrin)
+obs = torch.cat([obs, extrin], dim=-1)                     # 训练时用 extrin 驱动策略</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">Stage 2 路径 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>adapt_tconv(proprio_hist)</code></td><td>学生：只看 30 帧历史，猜 8 维 ẑ。这是唯一被训练的模块。</td></tr>
+      <tr><td><code>env_mlp(priv_info)</code></td><td>教师：仍读 priv_info 产 z，但权重冻结，只当 MSE 的 label。</td></tr>
+      <tr><td><code>cat([obs, extrin])</code></td><td>拼的是<strong>学生 ẑ</strong>，不是 z——策略 forward 走学生路径，与部署一致。</td></tr>
+      <tr><td><code>extrin_gt</code></td><td>不参与 cat，只在 <code>padapt.train()</code> 里算 loss = MSE(ẑ, z)。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+Stage 2 训练时仿真里<strong>同时有 z 和 ẑ</strong>：z 是标准答案，ẑ 是学生作答；loss 让学生逼近答案。但控制手的仍是 ẑ 路径——这样部署时只有历史、没有 priv_info，行为与训练一致。
+</div>
+
+<h2 id="act-forward">三、三种前向模式</h2>
+<table>
+  <thead><tr><th>方法</th><th>何时调用</th><th>探索</th><th>返回值</th></tr></thead>
+  <tbody>
+    <tr><td><code>act()</code></td><td>PPO <code>play_steps</code> 采样</td><td>从 $\mathcal N(\mu,\sigma)$ 采样</td><td>actions, neglogp, values, mus, sigmas</td></tr>
+    <tr><td><code>act_inference()</code></td><td>play.py / deploy / padapt 控手</td><td>无，直接 μ</td><td>μ</td></tr>
+    <tr><td><code>forward()</code></td><td>PPO <code>train_epoch</code> 更新</td><td>对<strong>已存</strong> actions 算 log prob</td><td>prev_neglogp, entropy, values, mus, sigmas, extrin, extrin_gt</td></tr>
+  </tbody>
+</table>
+
+<span class="code-cap">models.py · act() 采样</span>
+<pre><code class="lang-py">mu, logstd, value, _, _ = self._actor_critic(obs_dict)
+sigma = torch.exp(logstd)                    # logstd 实际等于 learnable self.sigma
+distr = torch.distributions.Normal(mu, sigma)
+selected_action = distr.sample()
+'neglogpacs': -distr.log_prob(selected_action).sum(1)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">act() · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>_actor_critic(obs_dict)</code></td><td>算 μ、logstd、V。Stage 1/2 路径在此分支。</td></tr>
+      <tr><td><code>logstd = mu * 0 + sigma</code></td><td>广播技巧：21 维动作<strong>共享同一个可学习 σ</strong>。</td></tr>
+      <tr><td><code>Normal(mu, sigma).sample()</code></td><td>探索：每维独立高斯采样。</td></tr>
+      <tr><td><code>-log_prob(...).sum(1)</code></td><td>neglogpacs：PPO ratio 用的旧策略对数概率。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="tconv">四、ProprioAdaptTConv</h2>
+<p>结构详解见<a href="07-tconv-network.html">第 07 章</a>。</p>
+
+<span class="code-cap">models.py · ProprioAdaptTConv</span>
+<pre><code class="lang-py">class ProprioAdaptTConv(nn.Module):
+    def __init__(self, frame_shape):          # Xhand: frame_shape = 186//3 = 62
+        self.channel_transform = nn.Sequential(  # 逐帧 MLP
+            nn.Linear(frame_shape, frame_shape), nn.ReLU(),
+            nn.Linear(frame_shape, frame_shape), nn.ReLU())
+        self.temporal_aggregation = nn.Sequential(
+            nn.Conv1d(frame_shape, frame_shape, 9, stride=2),  # 30 → 11
+            nn.ReLU(),
+            nn.Conv1d(frame_shape, frame_shape, 5, stride=1),  # 11 → 7
+            nn.ReLU(),
+            nn.Conv1d(frame_shape, frame_shape, 5, stride=1),  # 7 → 3
+            nn.ReLU())
+        self.low_dim_proj = nn.Linear(frame_shape * 3, 8)      # 62×3 → 8
+
+    def forward(self, x):                     # x: (N, 30, 62)
+        x = self.channel_transform(x)
+        x = x.permute(0, 2, 1)                # (N, 62, 30)
+        x = self.temporal_aggregation(x)      # (N, 62, 3)
+        return self.low_dim_proj(x.flatten(1))</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">ProprioAdaptTConv.forward · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>channel_transform(x)</code></td><td>对每一帧 62 维向量做相同 MLP，提取帧内特征。</td></tr>
+      <tr><td><code>permute(0, 2, 1)</code></td><td>(N,30,62) → (N,62,30)：Conv1d 把 62 当 channel、30 当时间轴。</td></tr>
+      <tr><td><code>Conv1d k=9,s=2</code></td><td>时间维 30 → 11。看约 9 帧窗口，步长 2 下采样。</td></tr>
+      <tr><td><code>Conv1d k=5,s=1 ×2</code></td><td>11 → 7 → 3。三层卷积把 1.5 秒历史压成 3 个时间 bin。</td></tr>
+      <tr><td><code>low_dim_proj(flatten)</code></td><td>62×3=186 → 8。输出 ẑ，与 env_mlp 的 z 同维。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+30 帧历史 ≈ 1.5 秒的手感记忆（仿真 20Hz × 30）。TConv 用三层卷积把"这段时间手被物体推成什么样"压成 8 个数——正好与教师的 $z$ 同维，方便做 MSE。
+</div>
+
+<h2 id="rms">五、RunningMeanStd 在线归一化</h2>
+<span class="code-cap">running_mean_std.py · forward()</span>
+<pre><code class="lang-py">def forward(self, input, unnorm=False):
+    if self.training:
+        mean = input.mean(self.axis)
+        var = input.var(self.axis)
+        self.running_mean, self.running_var, self.count = \
+            self._update_mean_var_count_from_moments(...)
+
+    if unnorm:    # 价值反归一化
+        y = sqrt(var + eps) * clamp(input) + mean
+    else:
+        y = (input - mean) / sqrt(var + eps)
+        y = clamp(y, min=-5.0, max=5.0)
+    return y</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">RunningMeanStd.forward · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>if self.training</code></td><td>train 模式：用当前 batch 更新 running 均值方差（Welford 在线算法）。</td></tr>
+      <tr><td><code>unnorm=True</code></td><td>反归一化：PPO 存 buffer 前把价值变回物理量级。</td></tr>
+      <tr><td><code>clamp(y, -5, 5)</code></td><td>防止极端 outlier 毁掉网络输入。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">本项目三处 RunningMeanStd</div>
+  <table>
+    <thead><tr><th>实例</th><th>insize</th><th>Stage</th><th>训练时更新？</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">PPO.running_mean_std</td><td>(186,)</td><td>1</td><td>是（minibatch 更新段 train 模式）</td></tr>
+      <tr><td class="sym-col">PPO.value_mean_std</td><td>(1,)</td><td>1</td><td>是（play_steps 末 normalize returns）</td></tr>
+      <tr><td class="sym-col">ProprioAdapt.sa_mean_std</td><td>(30, 62)</td><td>2</td><td>是（对 proprio_hist 逐元素归一化）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="padapt">六、ProprioAdapt：冻结教师 + MSE 蒸馏</h2>
+
+<h3 id="freeze">6.1 加载教师并冻结 — 「只练小抄模块」</h3>
+<div class="intuition">
+Stage 2 像考试复习：<strong>运动技巧（actor_mlp）已经会了</strong>，不再改；<strong>小抄来源（env_mlp）标准答案固定</strong>；只练<strong>用历史猜小抄的能力（adapt_tconv）</strong>。代码里就是遍历参数名，只有含 <code>adapt_tconv</code> 的 <code>requires_grad=True</code>。
+</div>
+
+<span class="code-cap">padapt.py · __init__</span>
+<pre><code class="lang-py">self.model = ActorCritic({..., 'proprio_adapt': True})
+self.model.eval()
+
+adapt_params = []
+for name, p in self.model.named_parameters():
+    if 'adapt_tconv' in name:
+        adapt_params.append(p)
+    else:
+        p.requires_grad = False
+self.optim = torch.optim.Adam(adapt_params, lr=3e-4)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">padapt.__init__ 冻结逻辑 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>proprio_adapt: True</code></td><td>创建带 adapt_tconv 的 ActorCritic。</td></tr>
+      <tr><td><code>self.model.eval()</code></td><td>全局 eval：BatchNorm 等若有则冻结行为（本网络主要是 Linear/Conv）。</td></tr>
+      <tr><td><code>'adapt_tconv' in name</code></td><td>只有 TConv 的 channel_transform、Conv1d、low_dim_proj 参数可训练。</td></tr>
+      <tr><td><code>p.requires_grad = False</code></td><td>env_mlp、actor_mlp、mu、sigma、value 全部冻结。</td></tr>
+      <tr><td><code>Adam(adapt_params, lr=3e-4)</code></td><td>优化器只看见 TConv 参数，backward 时其他模块无梯度。</td></tr>
+      <tr><td><code>sa_mean_std.train()</code></td><td>历史归一化器<strong>仍在更新</strong>——它也是 Stage 2 需要适应的部分。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">padapt.py · restore_train</span>
+<pre><code class="lang-py">self.model.load_state_dict(checkpoint['model'], strict=False)
+self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])</code></pre>
+
+<div class="ask-box">
+  <b>问：strict=False 会丢权重吗？</b> 不会丢 Stage 1 有的键（env_mlp、actor_mlp 等完整加载）。只是 Stage 1 ckpt 里没有 adapt_tconv 键，这些层保持随机初始化，随后由 MSE 训练填满。
+</div>
+
+<h3 id="mse-loop">6.2 训练循环：MSE + 用 μ 控环境</h3>
+<span class="code-cap">padapt.py · train()</span>
+<pre><code class="lang-py">while self.agent_steps &lt;= 1e9:
+    input_dict = {
+        'obs': self.running_mean_std(obs_dict['obs']).detach(),
+        'priv_info': obs_dict['priv_info'],
+        'proprio_hist': self.sa_mean_std(obs_dict['proprio_hist'].detach()),
+    }
+    mu, _, _, e, e_gt = self.model._actor_critic(input_dict)
+    loss = ((e - e_gt.detach()) ** 2).mean()    # ★ MSE(ẑ, z)
+    self.optim.zero_grad()
+    loss.backward()
+    self.optim.step()
+
+    mu = torch.clamp(mu.detach(), -1.0, 1.0)
+    obs_dict, r, done, info = self.env.step(mu)   # 用教师 μ 驱动仿真</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">padapt.train() 每步 · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>running_mean_std(obs).detach()</code></td><td>obs 归一化，detach 不传梯度到 RMS（RMS 在 Stage 2 冻结 eval）。</td></tr>
+      <tr><td><code>sa_mean_std(proprio_hist)</code></td><td>历史归一化，<strong>train 模式会更新</strong> sa_mean_std 统计量。</td></tr>
+      <tr><td><code>_actor_critic(...)</code></td><td>返回 mu、V、extrin(ẑ)、extrin_gt(z)。</td></tr>
+      <tr><td><code>MSE(e, e_gt.detach())</code></td><td>让学生 ẑ 逼近教师 z。e_gt detach 防止梯度流向 env_mlp。</td></tr>
+      <tr><td><code>loss.backward(); optim.step()</code></td><td>只有 adapt_tconv + sa_mean_std 有梯度（后者若 insize 大可训练 buffer）。</td></tr>
+      <tr><td><code>env.step(mu)</code></td><td>用<strong>冻结 Actor 的 μ</strong> 控手，保证数据分布与 Stage 1 相近。奖励只监控，不进 loss。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+Stage 2 不是 RL：没有 PPO、没有 GAE。每一步只做<strong>回归</strong>——让 TConv 输出逼近 env_mlp 输出。环境仍用<strong>冻结的主干+Actor</strong> 算出的 μ 去转物体，保证数据分布与 Stage 1 相近。奖励只用于监控 <code>best.pth</code>，不进 loss。
+</div>
+
+<h3 id="checkpoint">6.3 Checkpoint 格式</h3>
+<span class="code-cap">padapt.py · save / restore_test</span>
+<pre><code class="lang-py"># 保存（stage2_nn/）
+weights = {'model': ..., 'running_mean_std': ..., 'sa_mean_std': ...}
+
+# 部署加载
+running_mean_std ← ckpt
+model            ← ckpt
+sa_mean_std      ← ckpt</code></pre>
+
+<h2 id="freeze-table">七、Stage 1 vs Stage 2 参数冻结对照表</h2>
+<div class="symtable">
+  <div class="symtitle">各模块 requires_grad 与 forward 角色</div>
+  <table>
+    <thead>
+      <tr><th>模块</th><th>Stage 1 · PPO</th><th>Stage 2 · ProprioAdapt</th><th>部署</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="sym-col">env_mlp</td><td>✅ 训练</td><td>❄️ 冻结；仅 forward 产 z 作 label</td><td>不使用</td></tr>
+      <tr><td class="sym-col">adapt_tconv</td><td>不存在</td><td>✅ <strong>唯一训练</strong></td><td>✅ 推理 ẑ</td></tr>
+      <tr><td class="sym-col">actor_mlp + μ + σ</td><td>✅ 训练</td><td>❄️ 冻结</td><td>✅ 推理 μ</td></tr>
+      <tr><td class="sym-col">value head</td><td>✅ 训练</td><td>❄️ 冻结（forward 不算 loss）</td><td>不使用</td></tr>
+      <tr><td class="sym-col">running_mean_std (obs)</td><td>✅ 在线更新</td><td>❄️ eval，load Stage1</td><td>✅ eval</td></tr>
+      <tr><td class="sym-col">value_mean_std</td><td>✅ 在线更新</td><td>— 未使用</td><td>—</td></tr>
+      <tr><td class="sym-col">sa_mean_std</td><td>— 未使用</td><td>✅ 在线更新</td><td>✅ eval</td></tr>
+      <tr><td class="sym-col">损失函数</td><td>PPO 裁剪 + 价值 + bounds</td><td>MSE(ẑ, z)</td><td>—</td></tr>
+      <tr><td class="sym-col">第二输入</td><td>priv_info → z</td><td>proprio_hist → ẑ；priv_info 仅作 label</td><td>proprio_hist → ẑ</td></tr>
+      <tr><td class="sym-col">输出目录</td><td>stage1_nn/</td><td>stage2_nn/</td><td>load stage2 best.pth</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="mlp">八、MLP 辅助类</h2>
+<span class="code-cap">models.py · MLP</span>
+<pre><code class="lang-py">class MLP(nn.Module):
+    def __init__(self, units, input_size):
+        layers = []
+        for output_size in units:
+            layers.append(nn.Linear(input_size, output_size))
+            layers.append(nn.ELU())
+            input_size = output_size
+        self.mlp = nn.Sequential(*layers)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">MLP · 逐行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>for output_size in units</code></td><td>按列表堆 Linear 层，如 [512,256,128]。</td></tr>
+      <tr><td><code>nn.ELU()</code></td><td>激活函数。ELU 负半轴平滑，利于连续控制（比 ReLU 少 dead neuron）。</td></tr>
+      <tr><td>无残差</td><td>简单堆叠，与 RMA 论文原版一致。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="pitfalls">九、常见误读</h2>
+<table>
+  <thead><tr><th>误读</th><th>正解</th></tr></thead>
+  <tbody>
+    <tr><td>Stage 2 也在跑 PPO</td><td>只有 Adam + MSE，无 ExperienceBuffer</td></tr>
+    <tr><td>部署需要 priv_info</td><td>只需 obs + proprio_hist；TConv 替代 env_mlp</td></tr>
+    <tr><td>adapt_tconv 在 Stage1 checkpoint 里</td><td>Stage1 无此键；Stage2 restore_train strict=False</td></tr>
+    <tr><td>sa_mean_std 可省略</td><td>历史未归一化时 TConv 难收敛；部署必须 load</td></tr>
+    <tr><td>Stage 2 训练 actor_mlp</td><td>requires_grad=False，只有 adapt_tconv 可训练</td></tr>
+  </tbody>
+</table>
+
+<h2 id="forward-detail">十、forward() 更新阶段详解</h2>
+<span class="code-cap">models.py · forward()</span>
+<pre><code class="lang-py">def forward(self, input_dict):
+    prev_actions = input_dict.get('prev_actions', None)
+    mu, logstd, value, extrin, extrin_gt = self._actor_critic(input_dict)
+    sigma = torch.exp(logstd)
+    distr = torch.distributions.Normal(mu, sigma)
+    entropy = distr.entropy().sum(dim=-1)
+    prev_neglogp = -distr.log_prob(prev_actions).sum(1)
+    return {'prev_neglogp': ..., 'values': value, 'entropy': entropy, ...}</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">forward · 与 act 的区别</div>
+  <table>
+    <thead><tr><th>点</th><th>act()</th><th>forward()</th></tr></thead>
+    <tbody>
+      <tr><td>动作来源</td><td>从分布<strong>采样</strong>新动作</td><td>用 buffer 里<strong>已存</strong>的 prev_actions</td></tr>
+      <tr><td>目的</td><td>探索、收集轨迹</td><td>算新策略对旧动作的 log prob → PPO ratio</td></tr>
+      <tr><td>探索</td><td>有随机性</td><td>无采样，确定性 eval 旧动作概率</td></tr>
+      <tr><td>entropy</td><td>不返回</td><td>返回，用于 entropy bonus</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="sigma-init">十一、sigma 初始化与 bounds loss</h2>
+<p><code>ActorCritic.__init__</code> 末尾 <code>nn.init.constant_(self.sigma, 0)</code>，即初始 log-std=0 → σ=1。PPO 的 bounds loss（<code>bounds_loss_coef &gt; 0</code> 时）惩罚 μ 超出 soft_bound=1.1，防止动作长期顶在饱和区。</p>
+
+<div class="walk-table">
+  <div class="walktitle">bounds loss · 代码含义</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>clamp_max(mu - 1.1, 0) ** 2</code></td><td>μ 超过 +1.1 的部分平方惩罚</td></tr>
+      <tr><td><code>clamp_max(-mu + 1.1, 0) ** 2</code></td><td>μ 低于 -1.1 的部分平方惩罚</td></tr>
+      <tr><td><code>sum(axis=-1)</code></td><td>21 维动作分别惩罚后求和</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="padapt-stats">十二、ProprioAdapt 统计与存盘</h2>
+<span class="code-cap">padapt.py · 训练循环统计</span>
+<pre><code class="lang-py">self.step_reward += r
+done_indices = done.nonzero(as_tuple=False)
+self.mean_eps_reward.update(self.step_reward[done_indices])
+# ...
+if mean_rewards > self.best_rewards:
+    self.save(os.path.join(self.nn_dir, 'best'))</code></pre>
+
+<div class="intuition">
+Stage 2 的 reward <strong>不进 loss</strong>，但仍在累计 episode 统计：mean reward 创新高就存 best.pth。这是监控蒸馏是否「边学边还能转」的启发式指标，不是优化目标。
+</div>
+
+<h2 id="deploy-path">十三、部署路径：PolicyRunner 与 test()</h2>
+<span class="code-cap">deploy_xhand/policy_runner.py · act（等价 padapt.test）</span>
+<pre><code class="lang-py">inp = {
+    "obs": self.agent.running_mean_std(obs_dict["obs"]),
+    "proprio_hist": self.agent.sa_mean_std(obs_dict["proprio_hist"]),
+}
+mu = self.agent.model.act_inference(inp)
+return torch.clamp(mu, -1.0, 1.0)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">部署 vs padapt.test · 输入对比</div>
+  <table>
+    <thead><tr><th>键</th><th>训练 model_act (Stage1)</th><th>部署 PolicyRunner</th></tr></thead>
+    <tbody>
+      <tr><td>obs</td><td>✅ RMS 归一化</td><td>✅ RMS 归一化（load ckpt）</td></tr>
+      <tr><td>priv_info</td><td>✅ env_mlp 输入</td><td>❌ 无</td></tr>
+      <tr><td>proprio_hist</td><td>❌ 不用</td><td>✅ sa_mean_std 归一化 → TConv</td></tr>
+      <tr><td>推理 API</td><td>act() 采样</td><td>act_inference() 只要 μ</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="faq">十四、FAQ</h2>
+
+<div class="ask-box">
+  <b>问：Stage 2 为什么还要 env.step(mu)？</b> 需要新数据：物体位置、域随机化、接触状态每步都在变，TConv 必须在各种手感下学猜 z。μ 来自冻结 Actor，转动物体的行为与 Stage 1 一致。
+</div>
+
+<div class="ask-box">
+  <b>问：蒸馏时 gravity 为什么要 -9.81？</b> train.py 在 ProprioAdapt 分支强制真实重力（见源码注释）。Stage 1 可能用 gravity curriculum 近失重；Stage 2 要在真机条件下蒸馏，否则 student 学的是「假重力」下的历史模式。
+</div>
+
+<h2 id="weight-init">十五、权重初始化</h2>
+<p><code>ActorCritic.__init__</code> 对 Conv/Linear 做 fan-out 正态初始化，bias 置零；<code>sigma</code> 常数 0。与 IsaacGymEnvs/RMA 原版一致，无需手动改。</p>
+
+<div class="walk-table">
+  <div class="walktitle">初始化 · 要点</div>
+  <table>
+    <thead><tr><th>模块</th><th>初始化</th></tr></thead>
+    <tbody>
+      <tr><td>Linear / Conv</td><td>weight ~ N(0, sqrt(2/fan_out))；bias=0</td></tr>
+      <tr><td>self.sigma</td><td>0 → exp(0)=1，初始探索宽度 1</td></tr>
+      <tr><td>adapt_tconv (Stage2)</td><td>Stage1 ckpt 无此键 → 随机初始化后 MSE 训练</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box"> 不能上真机。Stage 1 依赖 priv_info，真机没有。必须 Stage 2 蒸馏出 TConv，load stage2_nn/best.pth，走 PolicyRunner 路径。
+</div>
+
+<div class="ask-box">
+  <b>问：actor_units [512,256,128] 能改吗？</b> 可以，但改后 Stage 1/2 checkpoint 不兼容，需重训。改 priv_mlp 或 input_shape 同理。
+</div>
+
+<div class="tip">
+<b>本章小结。</b> <code>ActorCritic</code> 像分区大脑：Stage 1 练全套；Stage 2 <strong>只练小抄模块 adapt_tconv</strong>，用 MSE 让 ẑ≈z，其余全部冻结。三份 RunningMeanStd 分别管 obs、value、历史。下一章把 Stage 1 的 8 步 rollout 与 CPU/GPU 分工并排放，做 capstone 复盘。</div>
+
+<div class="pager">
+  <a href="20-ppo-training-loop.html"><div class="dir">← 上一章</div><div class="ttl">20 · PPO 训练循环</div></a>
+  <a class="next" href="22-one-step-capstone.html"><div class="dir">下一章 →</div><div class="ttl">22 · 一步训练全链路 Capstone</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 21 章 · 网络与 ProprioAdapt</footer>
+</body>
+</html>

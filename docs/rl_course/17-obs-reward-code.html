@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>17 · 观测与奖励代码精讲</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 17 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 17 · 环境核心</div>
+  <h1>观测与奖励代码逐行精讲</h1>
+  <p class="sub">把 <code>compute_observations</code>、<code>compute_rewards</code>、<code>_get_dones</code> 拆到每一行：186 维每个索引是什么？六项奖励怎么算？特权信息 8 维给谁用？——附带「第 0 维是什么」级举例，适合第一次读 PyTorch 观测代码的同学。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>前置。</b> 直觉版 MDP 见 <a href="02-env-reward.html">第 02 章</a>；环境回调顺序见 <a href="16-env-lifecycle.html">第 16 章</a>。<code>proprio_hist</code>（30×62）留给 TConv 学生，见 <a href="06-rma-distillation.html">第 06 章</a>。</div>
+
+<div class="glossary">
+  <h4>📖 本章术语速查</h4>
+  <dl>
+    <dt>policy obs（186 维）</dt>
+    <dd>喂给 PPO 教师网络的观测向量。= 最近 3 个控制步的「单帧 62 维」拼在一起。</dd>
+    <dt>单帧 62 维</dt>
+    <dd>某一时刻的传感器快照：21 关节 + 21 目标 + 5 触觉 + 15 接触点（后 15 维当前全 0）。</dd>
+    <dt>unscale</dt>
+    <dd>把关节角从物理弧度映射到 [-1, 1]。限位中点 → 0，弯到上限 → +1，弯到下限 → −1。</dd>
+    <dt>priv_info（8 维）</dt>
+    <dd>仿真里才知道的「上帝信息」：物体滑移、摩擦、质量、质心。教师可见，部署学生不可见。</dd>
+    <dt>proprio_hist（30×62）</dt>
+    <dd>最近 30 帧本体感历史。ProprioAdapt 学生用 TConv 从这里估计被藏起来的物理参数。</dd>
+    <dt>滑动窗口 lag history</dt>
+    <dd>80 帧 FIFO 队列：每步把最新 62 维挤进队尾，最老一帧挤出去。</dd>
+    <dt>rotate_reward</dt>
+    <dd>主奖励：物体绕 <code>rot_axis</code> 的角速度，裁剪到 ±0.5 后乘 scale 2.5。</dd>
+    <dt>height_reset</dt>
+    <dd>物体 z 高度超出本局 4 cm 窗口 → episode 终止（真 Game Over）。</dd>
+  </dl>
+</div>
+
+<h2 id="overview">一、三个函数的输出契约</h2>
+<div class="intuition">
+<code>_get_observations</code> 返回<strong>三份</strong>数据，像一次体检出三张报告单：
+
+<ul>
+  <li><code>policy</code>（186 维）→ 给 PPO 教师：「你现在手啥样、上一拍目标啥样、触觉多大」</li>
+  <li><code>priv_info</code>（8 维）→ 给教师的「透视挂」：物体滑没滑、摩擦多大（学生看不到）</li>
+  <li><code>proprio_hist</code>（30×62）→ 给蒸馏学生的「30 帧短视频」</li>
+</ul>
+<code>_get_rewards</code> 返回每个 env 一个标量分数；<code>_get_dones</code> 返回 <code>(terminated, time_out)</code> 二元组——前者是掉笔，后者是时间到。
+</div>
+
+<span class="code-cap">xhand_wave_env.py · _get_observations</span>
+<pre><code class="lang-py">def _get_observations(self) -> dict:
+    self._refresh_lab()
+    obs = self.compute_observations()
+    return {
+        "policy": obs,                    # (num_envs, 186)
+        "priv_info": self.priv_info_buf,  # (num_envs, 8)
+        "proprio_hist": self.proprio_hist_buf,  # (num_envs, 30, 62)
+    }</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · _get_observations</div>
+  <table>
+    <tbody>
+      <tr><td>_refresh_lab()</td><td>先抄仿真最新读数——观测必须基于「这一拍末尾」的状态。</td></tr>
+      <tr><td>compute_observations()</td><td>核心工厂：拼触觉、压滑动窗口、输出 186 维。</td></tr>
+      <tr><td>return dict 三键</td><td>IsaacLab 约定字典观测；PPO wrapper 会按 key 取不同分支喂网络。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="frame-layout">二、单帧 62 维与 186 维索引表</h2>
+
+<div class="math-block">
+$$\text{单帧 62} = \underbrace{21}_{\hat q} + \underbrace{21}_{\text{targets}} + \underbrace{5}_{\text{contact}} + \underbrace{15}_{\text{contact\_pos}}, \qquad
+\text{policy obs 186} = \text{单帧} \times 3\ \text{（最近三帧拼接）}.$$
+</div>
+
+<p>滑动窗口 <code>obs_buf_lag_history</code> 深 80 帧，但策略只取<strong>最后 3 帧</strong> reshape 成 186 维。帧顺序是<strong>从旧到新</strong>：索引 0–61 是 $t-2$，62–123 是 $t-1$，124–185 是 $t$（当前拍）。</p>
+
+<div class="intuition">
+把 186 维想成<strong>三连拍照片</strong>：左边一张两拍前的手，中间一张上一拍，右边一张刚刚拍的。神经网络同时看三帧，才能感觉「手指是在加速弯还是已经弯到位」——单帧看不出动态。
+</div>
+
+<h3 id="186-table">2.1 186 维全局索引总表</h3>
+<div class="symtable">
+  <div class="symtitle">186 维 policy 观测索引（全局下标）</div>
+  <table>
+    <thead><tr><th>全局索引</th><th>帧</th><th>单帧内索引</th><th>内容</th><th>维度</th></tr></thead>
+    <tbody>
+      <tr><td>0 – 20</td><td>第 1 帧 ($t-2$)</td><td>0 – 20</td><td>归一化关节角 $\hat q$（<code>unscale</code>，含噪声）</td><td>21</td></tr>
+      <tr><td>21 – 41</td><td>第 1 帧</td><td>21 – 41</td><td>控制目标 <code>cur_targets</code></td><td>21</td></tr>
+      <tr><td>42 – 46</td><td>第 1 帧</td><td>42 – 46</td><td>指尖触觉力（拇指→小指）</td><td>5</td></tr>
+      <tr><td>47 – 61</td><td>第 1 帧</td><td>47 – 61</td><td>接触点局部坐标（5×3，默认全 0）</td><td>15</td></tr>
+      <tr><td>62 – 82</td><td>第 2 帧 ($t-1$)</td><td>0 – 20</td><td>归一化关节角</td><td>21</td></tr>
+      <tr><td>83 – 103</td><td>第 2 帧</td><td>21 – 41</td><td>控制目标</td><td>21</td></tr>
+      <tr><td>104 – 108</td><td>第 2 帧</td><td>42 – 46</td><td>触觉力</td><td>5</td></tr>
+      <tr><td>109 – 123</td><td>第 2 帧</td><td>47 – 61</td><td>接触点</td><td>15</td></tr>
+      <tr><td>124 – 144</td><td>第 3 帧 ($t$)</td><td>0 – 20</td><td>归一化关节角</td><td>21</td></tr>
+      <tr><td>145 – 165</td><td>第 3 帧</td><td>21 – 41</td><td>控制目标</td><td>21</td></tr>
+      <tr><td>166 – 170</td><td>第 3 帧</td><td>42 – 46</td><td>触觉力</td><td>5</td></tr>
+      <tr><td>171 – 185</td><td>第 3 帧</td><td>47 – 61</td><td>接触点</td><td>15</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="dim-examples">2.2 「第 N 维是什么？」——带数字举例</h3>
+<p>关节顺序与 <code>cfg.actuated_joint_names</code> 一致（拇指 4 + 食/中/无各 4 + 掌根 1 + 小指 4 = 21）。下面用<strong>当前帧 $t$</strong>（全局索引 124–185）举例；前两帧把索引减 62 或 124 即可。</p>
+
+<div class="symtable">
+  <div class="symtitle">当前帧 $t$ 关键索引举例（假设某一仿真瞬间）</div>
+  <table>
+    <thead><tr><th>全局索引</th><th>关节/传感器</th><th>示例值</th><th>怎么理解</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><strong>124</strong></td><td><code>right_hand_thumb_mcp0_joint</code> 归一化角</td><td>0.35</td><td>拇指根部弯曲约在中限位偏上 35% 处；0=中间，+1=弯到顶</td></tr>
+      <tr><td class="sym-col"><strong>127</strong></td><td><code>right_hand_thumb_dip_joint</code></td><td>−0.12</td><td>拇指指尖略伸直（负值方向）</td></tr>
+      <tr><td class="sym-col"><strong>128</strong></td><td><code>right_hand_index_mcp0_joint</code></td><td>0.61</td><td>食指根部弯得较紧，快接近上限</td></tr>
+      <tr><td class="sym-col"><strong>140</strong></td><td><code>right_hand_ltspalm_joint</code></td><td>0.02</td><td>掌根关节几乎居中——握笔时通常变化不大</td></tr>
+      <tr><td class="sym-col"><strong>145</strong></td><td>拇指 mcp0 <strong>控制目标</strong></td><td>0.38</td><td>PD 正在追的目标角（比实际角 0.35 略大 → 还在往更弯方向走）</td></tr>
+      <tr><td class="sym-col"><strong>166</strong></td><td>拇指触觉力 (N)</td><td>2.3</td><td>拇指指尖法向力约 2.3 N——确实在推物体</td></tr>
+      <tr><td class="sym-col"><strong>167</strong></td><td>食指触觉力</td><td>1.8</td><td>食指也在推，略弱于拇指</td></tr>
+      <tr><td class="sym-col"><strong>170</strong></td><td>小指触觉力</td><td>0.0</td><td>小指几乎没碰到物体（可能还没包拢到位）</td></tr>
+      <tr><td class="sym-col"><strong>171–185</strong></td><td>接触点 xyz × 5</td><td>全 0</td><td>cfg <code>enable_contact_pos=False</code>，占位但恒零</td></tr>
+      <tr><td class="sym-col"><strong>0</strong></td><td>两拍前拇指 mcp0 角</td><td>0.30</td><td>对比索引 124 的 0.35 → 拇指这两拍在持续弯拢</td></tr>
+      <tr><td class="sym-col"><strong>42</strong></td><td>两拍前拇指触觉</td><td>1.5</td><td>对比索引 166 的 2.3 → 握力在加大</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="joint-order">2.3 单帧内 21 关节索引对照（三帧通用）</h3>
+<div class="symtable">
+  <div class="symtitle">单帧索引 0–20 ↔ 关节名（$\hat q$ 与 targets 同序）</div>
+  <table>
+    <thead><tr><th>单帧 idx</th><th>关节名</th><th>手指</th></tr></thead>
+    <tbody>
+      <tr><td>0–3</td><td>thumb mcp0, mcp1, pip, dip</td><td>拇指 4 DOF</td></tr>
+      <tr><td>4–7</td><td>index mcp0, mcp1, pip, dip</td><td>食指</td></tr>
+      <tr><td>8–11</td><td>mid mcp0, mcp1, pip, dip</td><td>中指</td></tr>
+      <tr><td>12–15</td><td>ring mcp0, mcp1, pip, dip</td><td>无名指</td></tr>
+      <tr><td>16</td><td>ltspalm</td><td>掌根</td></tr>
+      <tr><td>17–20</td><td>pinky mcp0, mcp1, pip, dip</td><td>小指</td></tr>
+      <tr><td>42–46</td><td>thumb, index, mid, ring, pinky 触觉</td><td>5 维法向力 (N)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>Q：为什么 targets 槽（21–41）存的是控制目标，不是实际关节角？</b><br>
+  A：策略输出的是增量动作，真正驱动仿真的是 <code>cur_targets</code>。把「我想去哪」和「我现在在哪」同时给网络，它才能学 PD 补偿。部署端 <code>deploy_env.py</code> 复刻同一布局。
+</div>
+
+<h2 id="compute-obs">三、<code>compute_observations</code> 逐行精读</h2>
+<p>函数约 416–493 行。下面按代码块顺序，每块配 walk-table。</p>
+
+<h3 id="contact">3.1 触觉：力 → 平滑 → 延迟 → 噪声</h3>
+<span class="code-cap">xhand_wave_env.py · compute_observations · 触觉（L418–440）</span>
+<pre><code class="lang-py">tactile_frame_pose = self.hand.data.body_link_state_w[:, self.elastomer_ids, :7]
+tactile_frame_pos = tactile_frame_pose[..., :3]
+tactile_frame_quat = tactile_frame_pose[..., 3:7]
+
+net_contact_forces_history = torch.cat([
+    self._contact_sensor[id].data.net_forces_w_history[:, :, 0, :].unsqueeze(2)
+    for id in self._contact_body_ids   # [0,1,2,3,4]
+], dim=2)
+norm_contact_forces_history = torch.norm(net_contact_forces_history, dim=-1)
+smooth_contact_forces = (
+    norm[:, 0, :] * contact_smooth + norm[:, 1, :] * (1 - contact_smooth))
+smooth_contact_forces[:, disable_tactile_ids] = 0.0</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 触觉读取（逐行）</div>
+  <table>
+    <tbody>
+      <tr><td>L418–420 tactile_frame_pose</td><td>读五个指尖刚体位姿（位置+四元数）——后面若开 contact_pos 要做坐标变换。</td></tr>
+      <tr><td>L424–425 net_contact_forces_history</td><td>5 个 ContactSensor 各保留 2 步力历史；拼成 (N, 2步, 5指, 3轴) 再取范数 → 每指一个标量力 (N)。</td></tr>
+      <tr><td>L426 smooth = 0.5×旧 + 0.5×新</td><td>两帧力加权平均，滤掉物理子步里的高频抖动——像触觉传感器的低通滤波。</td></tr>
+      <tr><td>L427 disable_tactile_ids</td><td>cfg 可关掉某几根指的触觉（模拟传感器坏掉），强制置 0。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">xhand_wave_env.py · 连续力路径 vs 二值触觉（L428–440）</span>
+<pre><code class="lang-py">if self.cfg.binary_contact:
+    binary_contacts = torch.where(smooth_contact_forces > contact_threshold, 1.0, 0.0)
+    latency_samples = torch.rand_like(self.last_contacts)
+    latency = torch.where(latency_samples < contact_latency, 1.0, 0.0)
+    self.last_contacts = self.last_contacts * latency + binary_contacts * (1 - latency)
+    ...
+else:
+    latency_samples = torch.rand_like(self.last_contacts)
+    latency = torch.where(latency_samples < contact_latency, 1.0, 0.0)
+    self.last_contacts = self.last_contacts * latency + smooth_contact_forces * (1 - latency)
+    sensed_contacts = self.last_contacts.clone()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 触觉延迟</div>
+  <table>
+    <tbody>
+      <tr><td>contact_latency = 0.005</td><td>每步 0.5% 概率「这一帧仍报上一帧的旧读数」——模拟 20 Hz 总线偶尔丢包。</td></tr>
+      <tr><td>last_contacts 状态机</td><td>不是简单读传感器，而是带记忆的：上一拍 2.1 N，这一拍可能还报 2.1 N（滞留）。</td></tr>
+      <tr><td>binary_contact=False（默认）</td><td>走连续力路径，值可以是 0.0–5.0 N 的实数；更利于学精细握力。</td></tr>
+      <tr><td>sensed_contacts → 索引 42–46 等</td><td>最终写入观测向量的，是经过延迟滤波后的力，不是物理引擎原始值。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="contact-pos">3.2 接触点（默认关闭）</h3>
+<span class="code-cap">xhand_wave_env.py · contact_pos（L442–462）</span>
+<pre><code class="lang-py">not_contact_mask = sensed_contacts < 1.0e-6
+not_contact_mask[:, self._contact_body_ids_disable] = True
+contact_mask = ~not_contact_mask
+
+if self.cfg.enable_contact_pos:
+    contact_pos = ...  # 从 ContactSensor contact_pos_w 读取
+    contact_pos[有接触] = transform_between_frames(..., 指尖局部系)
+else:
+    contact_pos = torch.zeros((num_envs, 15), device=self.device)
+
+if not self.cfg.enable_tactile:
+    contact_pos[:] = 0.0
+    sensed_contacts[:] = 0.0</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 接触点 15 维</div>
+  <table>
+    <tbody>
+      <tr><td>not_contact_mask</td><td>力小于 1e-6 认为「没碰到」——该指的 3 维接触点清零。</td></tr>
+      <tr><td>enable_contact_pos=False</td><td>当前默认：15 维全 0，但索引 47–61 仍占位，保证 sim/deploy 张量形状一致。</td></tr>
+      <tr><td>5 指 × 3 坐标 = 15</td><td>若开启：每指报告接触点在指尖局部系的 (x,y,z)，单位米。</td></tr>
+      <tr><td>enable_tactile=False</td><td>整段触觉+接触点全清零——用于 ablation 或没装传感器的实验。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="proprio-frame">3.3 拼单帧 + 压入滑动窗口</h3>
+<span class="code-cap">xhand_wave_env.py · 本体感 + 滑动窗口（L464–475）</span>
+<pre><code class="lang-py">prev_obs_buf = self.obs_buf_lag_history[:, 1:].clone()   # 左移一格
+joint_noise_matrix = (rand * 2 - 1) * joint_noise_scale   # ±0.02 rad 量级
+cur_obs_buf = unscale(joint_noise + hand_dof_pos, lower, upper).unsqueeze(1)  # (N,1,21)
+cur_tar_buf = self.cur_targets[:, None]                     # (N,1,21)
+cur_obs_buf = torch.cat([cur_obs_buf, cur_tar_buf,
+                         sensed_contacts.unsqueeze(1),      # (N,1,5)
+                         contact_pos.unsqueeze(1)], dim=-1)  # (N,1,62)
+self.obs_buf_lag_history[:] = torch.cat([prev_obs_buf, cur_obs_buf], dim=1)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 滑动窗口（逐行）</div>
+  <table>
+    <tbody>
+      <tr><td>L465 prev_obs_buf = history[:, 1:]</td><td>丢掉最老一帧，剩下 79 帧——像队列出队。</td></tr>
+      <tr><td>L466 joint_noise_matrix</td><td>给关节角加 ±0.02 rad 高斯噪声，模拟真机编码器抖动。</td></tr>
+      <tr><td>L467–471 unscale → cur_obs_buf</td><td>带噪关节角映射到 [-1,1]，得到单帧前 21 维 $\hat q$。</td></tr>
+      <tr><td>L472 cur_tar_buf</td><td>接上 21 维 <code>cur_targets</code>——单帧变 42 维。</td></tr>
+      <tr><td>L473–474 cat 触觉+接触点</td><td>再拼 5+15 维 → 完整单帧 62 维，形状 (N, 1, 62)。</td></tr>
+      <tr><td>L475 cat 回 history</td><td>79 帧 + 新 1 帧 = 80 帧满队列。下一步取 [-3:] 就是最新三连拍。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><code>unscale</code> 把关节角从物理限位映射到 $[-1,1]$：</p>
+<div class="math-block">
+$$\hat q = \frac{2q - q_{\max} - q_{\min}}{q_{\max} - q_{\min}}.$$
+</div>
+
+<div class="intuition">
+举例：某关节限位 $[0, 1.5]$ rad，当前 $q=0.75$（正中间）→ $\hat q = 0$。弯到 $1.5$ → $\hat q=+1$。网络输入永远在 [-1,1]，不同关节物理范围差很多也不影响训练尺度。
+</div>
+
+<h3 id="at-reset">3.4 reset 后填满历史（消除冷启动零帧）</h3>
+<span class="code-cap">xhand_wave_env.py · at_reset 填充（L477–487）</span>
+<pre><code class="lang-py">at_reset_env_ids = self.at_reset_buf.nonzero(...)
+# 对该批 env，把 lag history 的【每一帧】都填成当前读数
+self.obs_buf_lag_history[at_reset_env_ids, :, 0:21]   = unscale(关节角)
+self.obs_buf_lag_history[at_reset_env_ids, :, 21:42]  = 原始关节角（非 unscale，与 Sharpa 一致）
+self.obs_buf_lag_history[at_reset_env_ids, :, 42:47]  = 触觉
+self.obs_buf_lag_history[at_reset_env_ids, :, 47:62]  = 接触点
+self.at_reset_buf[at_reset_env_ids] = 0</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · reset 冷启动</div>
+  <table>
+    <tbody>
+      <tr><td>at_reset_buf=1 的 env</td><td>刚 reset 的环境——历史队列里还是上一局的垃圾或全零。</td></tr>
+      <tr><td>80 帧全部填当前值</td><td>像刚读档后连拍 80 张相同照片；这样取 [-3:] 时不会出现「前两帧全零」的假动态。</td></tr>
+      <tr><td>目标槽写原始关节角（非 unscale）</td><td>reset 第一拍特殊规则：索引 21–41 是 <code>hand_dof_pos</code> 弧度值，不是 <code>cur_targets</code>。部署测试 <code>test_frame_layout</code> 断言了这一点。</td></tr>
+      <tr><td>at_reset_buf 清零</td><td>下一拍起走正常滑动窗口逻辑。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="warn">
+<b>注意目标槽的语义。</b> 正常运行时，索引 21–41 存的是 <code>cur_targets</code>（控制目标）；但 reset 填充时，目标槽写的是<strong>原始</strong> <code>hand_dof_pos</code>（未 unscale）。部署端 <code>deploy_env.py</code> 照搬了同一逻辑——单元测试 <code>test_frame_layout</code> 专门断言这一点。
+</div>
+
+<h3 id="output">3.5 输出 policy obs 与 proprio_hist</h3>
+<span class="code-cap">xhand_wave_env.py · 输出（L488–493）</span>
+<pre><code class="lang-py">obs_buf = self.obs_buf_lag_history[:, -3:].reshape(num_envs, -1)  # → 186
+self.proprio_hist_buf[:] = self.obs_buf_lag_history[:, -prop_hist_len:].clone()  # 最近 30 帧
+self.priv_info_buf[:, 0:3] = self.object_pos - self.object_default_pose[:, :3]
+return obs_buf</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 输出三连拍</div>
+  <table>
+    <tbody>
+      <tr><td>[:, -3:].reshape(N, -1)</td><td>取队列最后 3 帧，每帧 62 维，拉平成 186 维一行——这就是 PPO 吃的 <code>policy</code>。</td></tr>
+      <tr><td>proprio_hist_buf = [-30:]</td><td>最近 30 帧 × 62 维留给 TConv；比 policy 看更长历史。</td></tr>
+      <tr><td>priv_info[:, 0:3] = 物块偏移</td><td>每步更新：物体现在离本局「出生点」滑了多少米 (Δx,Δy,Δz)。</td></tr>
+      <tr><td>priv_info[:, 3:8] 不变</td><td>摩擦/质量/质心在 __init__ 写好，整局不变。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>Q：打印 obs[124] 一直是 0，怎么办？</b><br>
+  A：检查 ① <code>at_reset_buf</code> 是否在 reset 后置 1 又清 0；② 该 env 是否真的在跑（done 后可能刚填历史）；③ 拇指 mcp0 是否物理上就在限位中点。用 tryit 里的部署脚本打印 <code>f[0:21]</code> 对照。
+</div>
+
+<h2 id="priv-info">四、<code>priv_info</code> 8 维详解</h2>
+<div class="symtable">
+  <div class="symtitle">priv_info_buf（教师 / RMA 专用）</div>
+  <table>
+    <thead><tr><th>索引</th><th>含义</th><th>示例值</th><th>写入时机</th></tr></thead>
+    <tbody>
+      <tr><td>0 – 2</td><td>物体位置偏移 $\Delta x,\Delta y,\Delta z$ (m)</td><td>(0.002, −0.001, 0.000)</td><td>每步 compute_observations</td></tr>
+      <tr><td>3</td><td>摩擦随机缩放系数</td><td>1.05</td><td>__init__（× 基准摩擦）</td></tr>
+      <tr><td>4</td><td>物体质量 (kg)</td><td>0.082</td><td>__init__</td></tr>
+      <tr><td>5 – 7</td><td>物体质心 COM (m)</td><td>(0, 0, 0.02)</td><td>__init__</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+教师网络像带了「物体滑移雷达」：索引 0–2 变大说明笔在掌心里滑了，该加大握力或改施力方向。学生部署时没有雷达，只能靠 30 帧手指感觉去猜——这就是 RMA 蒸馏要解决的问题（<a href="06-rma-distillation.html">06 章</a>）。
+</div>
+
+<h2 id="rewards">五、<code>_get_rewards</code> 与 <code>compute_rewards</code></h2>
+<p>先算六个<strong>原始标量</strong>（每个 env 一个 float），再经 <code>@torch.jit.script</code> 的 <code>compute_rewards</code> 加权求和。</p>
+
+<h3 id="six-terms">5.1 六项原始量</h3>
+<div class="symtable">
+  <div class="symtitle">_get_rewards 六项</div>
+  <table>
+    <thead><tr><th>#</th><th>变量名</th><th>计算</th><th>默认 scale</th><th>典型量级</th><th>正负</th></tr></thead>
+    <tbody>
+      <tr><td>①</td><td><code>rotate_reward</code></td><td><code>saturate((ω·n̂), -0.5, 0.5)</code></td><td>+2.5</td><td>0.1–0.5</td><td>主奖励</td></tr>
+      <tr><td>②</td><td><code>object_linvel_penalty</code></td><td>$\|x_t-x_{t-1}\|_1 / \Delta t$</td><td>-0.3</td><td>0.01–0.5 m/s</td><td>惩罚</td></tr>
+      <tr><td>③</td><td><code>pos_diff_penalty</code></td><td>$\sum_i (q_i - q_i^{\text{def}})^2$</td><td>-0.4</td><td>0.5–3.0</td><td>惩罚</td></tr>
+      <tr><td>④</td><td><code>torque_penalty</code></td><td>$\sum_i \tau_i^2$</td><td>-0.1</td><td>1–50</td><td>惩罚</td></tr>
+      <tr><td>⑤</td><td><code>work_penalty</code></td><td>$(\sum_i \tau_i \dot q_i)^2$</td><td>-0.5</td><td>0.1–10</td><td>惩罚</td></tr>
+      <tr><td>⑥</td><td><code>object_pos_diff</code></td><td>$1 / (\|x_t - x^{\text{def}}\| + 0.001)$</td><td>+0.003</td><td>10–1000</td><td>小奖励</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+<b>口算一例：</b> 物体绕 z 轴以 0.4 rad/s 旋转 → rotate_reward=0.4 → 贡献 0.4×2.5=+1.0。同时物体滑了 0.02 m/s → linvel_penalty≈0.02 → 贡献 −0.006。主项仍是旋转，其它是「别滑、别拧麻花、别费电」的护栏。
+</div>
+
+<span class="code-cap">xhand_wave_env.py · 旋转奖励核心</span>
+<pre><code class="lang-py">object_angvel = axis_angle_from_quat(
+    quat_mul(self.object_rot, quat_conjugate(self.object_rot_prev))
+) / self.step_dt
+rotate_reward = saturate(
+    (object_angvel * self.rot_axis).sum(-1),
+    angvel_clip_min, angvel_clip_max)   # 默认 ±0.5</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 旋转奖励</div>
+  <table>
+    <tbody>
+      <tr><td>quat_mul(r, conj(r_prev))</td><td>两帧姿态差 → 这段时间转了一个小的旋转。</td></tr>
+      <tr><td>axis_angle_from_quat / step_dt</td><td>转成角速度向量 ω (rad/s)。</td></tr>
+      <tr><td>ω · rot_axis</td><td>只奖励绕期望轴（默认竖轴 z）的分量——横着晃不算分。</td></tr>
+      <tr><td>saturate(±0.5)</td><td>单步角速度贡献封顶，防止物理爆炸时 reward 飞天。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">xhand_wave_env.py · compute_rewards（JIT）</span>
+<pre><code class="lang-py">@torch.jit.script
+def compute_rewards(rotate_reward, rotate_reward_scale,
+                    object_linvel_penalty, object_linvel_penalty_scale,
+                    pos_diff_penalty, pos_diff_penalty_scale,
+                    torque_penalty, torque_penalty_scale,
+                    work_penalty, work_penalty_scale,
+                    object_pos_diff, object_pos_reward_scale):
+    reward  = rotate_reward         * rotate_reward_scale
+    reward += object_linvel_penalty * object_linvel_penalty_scale
+    reward += pos_diff_penalty      * pos_diff_penalty_scale
+    reward += torque_penalty        * torque_penalty_scale
+    reward += work_penalty          * work_penalty_scale
+    reward += object_pos_diff       * object_pos_reward_scale
+    return reward</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · JIT 加权</div>
+  <table>
+    <tbody>
+      <tr><td>@torch.jit.script</td><td>编译成 TorchScript，仿真热路径少 Python 开销——每秒几千次调用。</td></tr>
+      <tr><td>六项线性加权</td><td>没有复杂 if-else；调参就是改 cfg 里六个 scale 系数。</td></tr>
+      <tr><td>penalty scale 为负</td><td>原始量是正数（力矩平方等），乘以负 scale → 从总 reward 里扣。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="dones">六、<code>_get_dones</code>：掉落、超时、重力课程</h2>
+<span class="code-cap">xhand_wave_env.py · _get_dones</span>
+<pre><code class="lang-py">height_reset_upper = object_pos[:, 2] > self.reset_height_upper[env]
+height_reset_lower = object_pos[:, 2] < self.reset_height_lower[env]
+height_reset = height_reset_upper | height_reset_lower
+time_out = self.episode_length_buf >= self.max_episode_length - 1</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 终止条件</div>
+  <table>
+    <tbody>
+      <tr><td>object_pos[:, 2]</td><td>物体竖直高度 z（掌心坐标系，单位米）。</td></tr>
+      <tr><td>> reset_height_upper</td><td>物体被甩太高（比如 z>0.639）→ 顶飞出局。</td></tr>
+      <tr><td>< reset_height_lower</td><td>物体滑太低（比如 z<0.599）→ 掉落出局。</td></tr>
+      <tr><td>episode_length ≥ 399</td><td>20 s × 20 Hz − 1 = 399 步 → 时间到，非惩罚性结束。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">终止条件</div>
+  <table>
+    <thead><tr><th>返回值</th><th>条件</th><th>语义</th><th>后续</th></tr></thead>
+    <tbody>
+      <tr><td><code>height_reset</code></td><td>物体 z 超出本局窗口</td><td>掉落 / 顶飞</td><td>真终止，bootstrap value=0</td></tr>
+      <tr><td><code>time_out</code></td><td>步数 ≥ 20s×20Hz−1</td><td>时间到</td><td>非惩罚性结束，GAE 需 bootstrap（<a href="04-gae.html">04 章</a>）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="gravity-curriculum">6.1 重力课程（自动加码）</h3>
+<span class="code-cap">xhand_wave_env.py · 重力课程</span>
+<pre><code class="lang-py">if (height_reset_upper.mean() < 5e-4 and height_reset_lower.mean() < 5e-4
+    and cfg.gravity_curriculum and common_step_counter > 1000):
+    gravity_amp = sqrt(gx² + gy² + gz²)
+    if gravity_amp < 10:
+        new_gravity = Float3(0, 0, -gravity_amp - 0.05)  # 每触发一次 +0.05 m/s²
+        physics_sim_view.set_gravity(new_gravity)</code></pre>
+
+<div class="intuition">
+当<strong>几乎没人再掉物体</strong>（上下界触发率均 &lt; 0.05%）时，悄悄把重力从初始 −0.05 往 −10 m/s² 推。策略先在「轻重力」学会转，再逐步适应真实重力。详见 <a href="09-domain-randomization.html">09 章</a>。初始仿真重力 cfg 为 <code>(0, 0, -0.05)</code>，几乎悬浮；TensorBoard 可看 <code>extras/gravity_z</code>。
+</div>
+
+<div class="ask-box">
+  <b>Q：time_out 和 height_reset 在 PPO 里有区别吗？</b><br>
+  A：有。height_reset 是真失败，下一状态价值当 0；time_out 只是「时间到」，GAE 仍要用 value 网络估计尾段价值（<a href="04-gae.html">04 章</a>）。代码里用两个 bool 分开返回，wrapper 会打上不同 done 标志。
+</div>
+
+<h2 id="deploy-align">七、与部署端对齐</h2>
+<p><code>deploy_xhand/deploy_env.py</code> 复刻了同一 62 维单帧布局与 186 维三帧窗口，但不跑 Isaac Sim。对齐与否由单元测试守卫：</p>
+<span class="code-cap">tests/deploy_xhand/test_deploy_env_obs.py</span>
+<pre><code class="lang-py">def test_spaces_for_proprioadapt():
+    assert env.observation_space.shape[1] == 186
+    assert env.action_space.shape[1] == 21
+    assert env.prop_hist_len == 30
+
+def test_frame_layout():
+    frame = obs["proprio_hist"][0, -1]
+    assert frame[0:21]   == unscale(关节角)
+    assert frame[21:42]  == 原始关节角   # reset 填充语义
+    assert frame[42:47]  == 触觉 / force_scale
+    assert frame[47:62]  == 0.0         # contact_pos 占位</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 部署对齐测试</div>
+  <table>
+    <tbody>
+      <tr><td>test_spaces</td><td>维度必须 186 / 21 / 30——改 cfg 忘改部署会在这里 FAIL。</td></tr>
+      <tr><td>test_frame_layout</td><td>单帧 62 维每个槽的语义与仿真一致，包括 reset 特殊规则。</td></tr>
+      <tr><td>FakeHWInterface</td><td>不连真机也能跑部署 env，用假关节角/触觉验逻辑。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="debug">八、调试 checklist</h2>
+<table>
+  <thead><tr><th>现象</th><th>查什么</th><th>可能原因</th></tr></thead>
+  <tbody>
+    <tr><td>obs 全零 / 形状错</td><td><code>observation_space % 3 == 0</code>？<code>at_reset_buf</code>？</td><td>cfg 维度错；reset 后没填满历史</td></tr>
+    <tr><td>索引 124–144 不变</td><td>仿真是否在步进？<code>_refresh_lab</code> 是否被调？</td><td>环境卡住或 hand_dof_pos 没更新</td></tr>
+    <tr><td>触觉一直 0</td><td><code>enable_tactile</code>？传感器 prim？</td><td>物体没接触 / scale 与 grasp cache 不匹配</td></tr>
+    <tr><td>reward 不涨</td><td>TensorBoard <code>rotate_reward</code></td><td><code>rot_axis</code> 与物体朝向不一致</td></tr>
+    <tr><td>频繁 height_reset</td><td>抓取缓存？高度窗？</td><td>没跑 gen_grasp 或窗口太窄</td></tr>
+    <tr><td>重力不加码</td><td><code>gravity_curriculum</code>？掉落率？</td><td>仍 &gt;0.05% env 在掉笔，课程不触发</td></tr>
+  </tbody>
+</table>
+
+<h2 id="reward-math">九、奖励口算练习（带数字）</h2>
+<p>假设某一 control step，某 env 的六项原始量为：</p>
+<div class="symtable">
+  <div class="symtitle">一例 env 的六项原始量 → 加权 reward</div>
+  <table>
+    <thead><tr><th>项</th><th>原始值</th><th>scale</th><th>贡献</th></tr></thead>
+    <tbody>
+      <tr><td>rotate_reward</td><td>0.35 rad/s 投影</td><td>+2.5</td><td>+0.875</td></tr>
+      <tr><td>object_linvel_penalty</td><td>0.04 m/s</td><td>−0.3</td><td>−0.012</td></tr>
+      <tr><td>pos_diff_penalty</td><td>1.2</td><td>−0.4</td><td>−0.48</td></tr>
+      <tr><td>torque_penalty</td><td>8.0</td><td>−0.1</td><td>−0.8</td></tr>
+      <tr><td>work_penalty</td><td>2.0 → 平方 4.0</td><td>−0.5</td><td>−2.0</td></tr>
+      <tr><td>object_pos_diff</td><td>1/(0.01+0.001)≈90.9</td><td>+0.003</td><td>+0.273</td></tr>
+      <tr><td><strong>合计</strong></td><td colspan="2"></td><td><strong>≈ −2.14</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="intuition">
+这一例里旋转不错（+0.875），但<strong>功惩罚</strong>（力矩×速度平方）和<strong>姿态偏离</strong>扣了大头。TensorBoard 若 <code>work_penalty</code> 长期很大，说明策略在「蛮力拧笔」——可调大 <code>work_penalty_scale</code> 或检查 PD 是否过硬。
+</div>
+
+<h2 id="faq">十、常见问题（FAQ）</h2>
+
+<div class="ask-box">
+  <b>Q：186 维里有没有物体位置？</b><br>
+  A：<code>policy</code> 观测<strong>没有</strong>物体位姿——只有手本体感+触觉。物体信息只在 <code>priv_info</code> 前 3 维（偏移量）给教师。学生部署时完全看不到，必须从手指感觉推断。
+</div>
+
+<div class="ask-box">
+  <b>Q：为什么关节角既 unscale 又留原始值？</b><br>
+  A：索引 0–20 是网络习惯吃的 [-1,1] 归一化值；索引 21–41 的 targets 槽在正常运行存的是控制目标（弧度），reset 时 temporarily 存原始角。这是与 SharpaWave 原版和部署端的历史约定。
+</div>
+
+<div class="ask-box">
+  <b>Q：六项 reward 可以先关掉五项只训旋转吗？</b><br>
+  A：可以把 cfg 里五个 penalty scale 设为 0，但不建议长期如此——力矩和滑移惩罚是防止 sim 里学到「暴力拧笔」的关键护栏，关掉后策略常出现过拟合仿真噪声。
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？（无需 Isaac Sim）</summary>
+  <div class="tryit-body">
+    <p>在 <code>era_dexhand_lab</code> 根目录运行部署观测对齐测试：</p>
+    <pre><code>pip install -e .   # 若尚未安装
+pytest tests/deploy_xhand/test_deploy_env_obs.py -v</code></pre>
+    <p>应看到 4 个测试全部 PASSED。其中 <code>test_frame_layout</code> 直接验证 62 维索引含义；<code>test_noise_gate_zeros_below_threshold</code> 验证低触觉力被噪声门清零。</p>
+    <p>单独打印一帧布局：</p>
+    <pre><code>python -c "
+import numpy as np, torch
+from rl_isaaclab.deploy_xhand.deploy_cfg import DeployCfg
+from rl_isaaclab.deploy_xhand.fake_hw import FakeHWInterface
+from rl_isaaclab.deploy_xhand.deploy_env import XhandInhandRotateDeployEnv
+cfg = DeployCfg(); cfg.keyboard_listen = False; cfg.warm_up = False
+env = XhandInhandRotateDeployEnv(cfg, FakeHWInterface(
+    pos=np.full(21, 0.2, np.float32), tactile=np.array([1,2,3,4,5], np.float32)))
+obs = env.reset()
+f = obs['proprio_hist'][0, -1].numpy()
+print('joints[0:21]:', f[0:21].round(3))
+print('targets[21:42]:', f[21:42].round(3))
+print('tactile[42:47]:', f[42:47].round(3))
+print('contact_pos[47:62] sum:', f[47:62].sum())
+"</code></pre>
+  </div>
+</details>
+
+<div class="tip">
+<b>本章小结。</b> 186 = 62×3：每帧 21 关节 + 21 目标 + 5 触觉 + 15 接触点。索引 124 是当前拍拇指根角，166 是拇指触觉——带着总表+举例读 <code>compute_observations</code> 就不会晕。特权 8 维 = 物块偏移(3) + 摩擦 + 质量 + 质心(3)。奖励六项加权求和，唯一主驱动力是沿 <code>rot_axis</code> 的角速度。下一章讲抓取缓存怎么生成、<code>_reset_idx</code> 怎么采样。</div>
+
+<div class="pager">
+  <a href="16-env-lifecycle.html"><div class="dir">← 上一章</div><div class="ttl">16 · 环境生命周期</div></a>
+  <a class="next" href="18-grasp-cache.html"><div class="dir">下一章 →</div><div class="ttl">18 · 抓取缓存</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 17 章 · 观测与奖励</footer>
+</body>
+</html>

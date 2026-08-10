@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 · 完整流程与代码地图</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 10 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 10 · 把一切串起来</div>
+  <h1>完整流程与代码地图</h1>
+  <p class="sub">从一条命令到一只会转物体的真机手。前九章的原理，在这里变成可以照着敲的操作。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>代码导读（Part B）。</b> 本章是流程概览；逐文件、逐函数精读见 <a href="13-project-map.html">第 13 章</a> 起的 13–22 章（入口脚本 → 配置 → 环境 → PPO → capstone）。</div>
+
+<h2 id="pipeline">一、端到端五步</h2>
+<div class="timeline">
+  <div class="step">
+    <h4>① 生成抓取缓存 gen_grasp（一次性，5–10 分钟）</h4>
+    <p>先让手"抓稳"物体，把一批合法的初始抓握姿态存成缓存。之后每局重置都从缓存里随机取一个起手式，省去每次重新抓的成本。</p>
+    <pre><code class="lang-py">python rl_isaaclab/scripts/gen_grasp.py \
+  --task Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0 --headless</code></pre>
+  </div>
+  <div class="step">
+    <h4>② Stage 1：PPO 训练教师（第 05 章）</h4>
+    <p>用特权信息 + PPO 训出会转物体的教师策略。RTX 5070 Ti 12GB 上 <code>--num_envs 10</code> 是安全起步（真正大规模训练会用上万环境）。产物是 <code>stage1_nn/</code> 下的 best/last 检查点。</p>
+    <pre><code class="lang-py">python rl_isaaclab/scripts/train.py \
+  --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless --num_envs 10</code></pre>
+  </div>
+  <div class="step">
+    <h4>③ Stage 2：蒸馏学生（第 06 章）</h4>
+    <p>冻结教师，只训 TConv，让学生从历史估计隐变量。开课程时推荐用 <code>last.pth</code>。产物是 <code>stage2_nn/</code>。</p>
+    <pre><code class="lang-py">python rl_isaaclab/scripts/train.py \
+  --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless \
+  --algorithm ProprioAdapt --load_path &lt;stage1 last.pth&gt;</code></pre>
+  </div>
+  <div class="step">
+    <h4>④ 可视化策略 play</h4>
+    <p>开 GUI 看策略表现，确认转得对不对、稳不稳。</p>
+    <pre><code class="lang-py">python rl_isaaclab/scripts/play.py \
+  --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --num_envs 16 \
+  --load_path ckpts/&lt;训练目录&gt;/best.pth</code></pre>
+  </div>
+  <div class="step">
+    <h4>⑤ 真机部署 deploy</h4>
+    <p>丢掉特权信息，只用 obs+历史→TConv→主干→动作（第 06 章）。键盘控制：e 开始 / w 冻结 / q 回零位。</p>
+    <pre><code class="lang-py">python rl_isaaclab/scripts/deploy.py \
+  --task Isaac-Inhand-Rotate-Deploy-... --hand_side 0/1 --load_path &lt;pth&gt;</code></pre>
+  </div>
+</div>
+
+<h2 id="dataflow">二、数据维度的一生</h2>
+<p>同一份信息在管线里如何变形，一眼看清（数字基于当前 cfg）：</p>
+<div class="viz">
+  <div class="viz-title">维度流转图</div>
+  <div class="viz-sub">从原始传感器到关节力矩，每一步的张量形状。鼠标悬停查看说明。</div>
+  <div id="dimFlow"></div>
+  <div class="readout" id="dimOut">把鼠标移到方块上查看每一步的维度含义。</div>
+</div>
+
+<h2 id="codemap">三、代码地图</h2>
+<p>整个 <code>rl_isaaclab/</code> 的关键文件与职责。点一下看它对应本课程的哪一章。</p>
+<div class="viz">
+  <div class="viz-title">文件职责图（可点击）</div>
+  <div class="viz-sub">蓝＝入口脚本，紫＝算法，青＝模型，绿＝环境/任务，橙＝封装。</div>
+  <div id="codeMap"></div>
+  <div class="readout" id="mapOut">点一个文件看它做什么、对应哪一章。</div>
+</div>
+
+<h2 id="entry">四、入口怎么把零件拼起来</h2>
+<p>这是理解工程结构的关键一段——<code>train.py</code> 用 Hydra 读配置，建环境、套封装、按 <code>--algorithm</code> 选 PPO 或 ProprioAdapt：</p>
+<span class="code-cap">scripts/train.py（节选）</span>
+<pre><code class="lang-py">env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)     # 建 IsaacLab 环境
+env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions) # 套成"上万环境并行"的接口
+agent = eval(agent_cfg["algo"])(env, output_dir=log_dir, full_config=config)  # PPO 或 ProprioAdapt
+if args_cli.resume or agent_cfg["algo"] == "ProprioAdapt":
+    agent.restore_train(resume_path)   # 蒸馏要先加载教师权重
+agent.train()</code></pre>
+<div class="note">
+<b>串起九章。</b> <code>GymStyleEnvWrapper</code> 把环境包成统一接口（动作裁剪、obs/priv_info/proprio_hist 字典、time_outs 处理）；<code>PPO</code>/<code>ProprioAdapt</code> 内部各自组装 <code>ActorCritic</code>（含 TConv，第 07 章）、<code>RunningMeanStd</code>（第 08 章）、<code>ExperienceBuffer</code>（GAE，第 04 章）。环境侧 <code>xhand_wave_env.py</code> 负责观测/奖励/域随机化（第 02、09 章）。
+</div>
+
+<h2 id="hparams">五、超参与命令速查</h2>
+<div class="kpi-row">
+  <div class="kpi"><div class="v">21</div><div class="k">动作维度</div></div>
+  <div class="kpi"><div class="v">186</div><div class="k">观测维度</div></div>
+  <div class="kpi"><div class="v">8</div><div class="k">隐变量 z 维</div></div>
+  <div class="kpi"><div class="v">30</div><div class="k">历史帧数</div></div>
+</div>
+<div class="symtable">
+  <div class="symtitle">超参速查（ppo_cfg.yaml + env_cfg）</div>
+  <table>
+    <thead><tr><th>类别</th><th>参数</th><th>值</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="4">PPO</td><td>γ / λ(tau)</td><td>0.99 / 0.95</td></tr>
+      <tr><td>e_clip ε</td><td>0.2</td></tr>
+      <tr><td>kl_threshold</td><td>0.02</td></tr>
+      <tr><td>mini_epochs / horizon</td><td>5 / 8</td></tr>
+      <tr><td rowspan="2">网络</td><td>actor mlp</td><td>[512,256,128] (ELU)</td></tr>
+      <tr><td>priv mlp</td><td>[256,128,8]</td></tr>
+      <tr><td rowspan="3">奖励权重</td><td>旋转 / 线速度</td><td>+2.5 / −0.3</td></tr>
+      <tr><td>姿态 / 力矩</td><td>−0.4 / −0.1</td></tr>
+      <tr><td>做功 / 位置保持</td><td>−0.5 / +0.003</td></tr>
+      <tr><td rowspan="3">随机化</td><td>质量 / 质心</td><td>0.01–0.25 / ±0.01</td></tr>
+      <tr><td>PD 增益</td><td>×[0.5, 2]（双峰）</td></tr>
+      <tr><td>重力课程</td><td>−0.05 → −10</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="warn">
+<b>环境提醒（来自项目 CLAUDE.md）。</b> RTX 50 系显卡<b>必须用 NVIDIA 驱动 580，不能用 595</b>（595 + Isaac Sim 5.x 在 Blackwell 上 100% 崩溃）。conda 环境名 <code>env_isaaclab</code>，Python 3.11，Isaac Sim 5.1.0，IsaacLab v2.3.2，PyTorch 2.7.0+cu128。
+</div>
+
+<h2 id="recap">六、九章回顾：一条逻辑线</h2>
+<div class="card">
+<p style="margin-top:0"><b>MDP（01）</b> 定义了"在状态里选动作拿奖励"的框架 → <b>本项目（02）</b> 把它实例化成 21 维动作、186 维观测、六项奖励 → 动作来自 <b>高斯策略（03）</b>，由 σ 控制探索 → 用 <b>GAE（04）</b> 估计"这步多好" → <b>PPO（05）</b> 用裁剪目标稳稳更新教师 → 教师靠特权信息，于是用 <b>RMA 蒸馏（06）</b> 训出能上真机的学生 → 学生的眼睛是 <b>TConv（07）</b>，整网由 ActorCritic 搭成 → 全程靠 <b>归一化（08）</b> 稳定数值、靠 <b>域随机化（09）</b> 跨越现实落差 → 最终（10）串成端到端管线，部署到真机。</p>
+</div>
+
+<div class="tip">
+<b>恭喜你读到这里。</b> 你现在应该能从"为什么"到"每个符号"再到"哪一行代码"，完整讲清这个灵巧手 sim-to-real 项目的强化学习内核了。回到任意一章的交互可视化多拖几次，理解会更扎实。
+</div>
+
+<div class="pager">
+  <a href="09-domain-randomization.html"><div class="dir">← 上一章</div><div class="ttl">09 · 域随机化与重力课程</div></a>
+  <a class="next" href="11-sim-to-real.html"><div class="dir">下一章 →</div><div class="ttl">11 · Sim-to-Real 实战</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 10 章 · 全课程完</footer>
+
+<script>
+/* ---------- 维度流转图 ---------- */
+(function () {
+  const info = {
+    sensor:['原始传感器','关节编码器 + 指尖触觉。每个控制步采一次。'],
+    frame:['单帧观测 (62)','21 关节角 + 21 目标 + 5 触觉 + 15 接触点。'],
+    obs:['策略观测 (186)','最近 3 帧拼接 = 62×3。教师与学生都用。'],
+    hist:['历史 (30×62)','最近 30 帧，仅喂给学生 TConv。'],
+    z:['隐变量 z/ẑ (8)','教师从特权信息编码 / 学生从历史估计。'],
+    cat:['主干输入 (194)','obs 186 ∥ z 8。'],
+    mu:['动作均值 μ (21)','Actor 输出，采样/取均值后裁到 ±1。'],
+    tgt:['关节目标 (21)','target += (1/24)·a，再夹到关节限位。'],
+    torque:['关节力矩 (21)','PD：τ = kp(target−q) − kd·q̇，驱动电机。'],
+  };
+  const A='#0071e3', P='#af52de', T='#30c8c9', G='#34c759', O='#ff9f0a';
+  function b(x,y,w,label,key,fill){
+    return `<g class="dbox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="44" rx="10" fill="${fill}"></rect>
+      <text x="${x+w/2}" y="${y+27}" text-anchor="middle" font-size="12.5" font-weight="600" fill="#fff">${label}</text></g>`;
+  }
+  function ar(x1,x2,y){ return `<path d="M${x1},${y} L${x2},${y}" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#dh)"></path>`; }
+  const svg = `<svg viewBox="0 0 900 220" role="img" aria-label="维度流转">
+    <defs><marker id="dh" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--text-faint)"></path></marker></defs>
+    ${b(15,30,110,'传感器','sensor',A)}
+    ${b(160,30,110,'单帧 62','frame',A)}
+    ${b(305,15,110,'观测 186','obs',A)}
+    ${b(305,95,120,'历史 30×62','hist',A)}
+    ${b(470,55,110,'z/ẑ (8)','z',P)}
+    ${b(470,135,110,'(z 来自上方两路)','z',T)}
+    ${b(625,55,110,'主干 194','cat',G)}
+    ${b(625,135,110,'μ (21)','mu',G)}
+    ${b(770,135,115,'力矩 (21)','torque',O)}
+    ${ar(125,158,52)}
+    ${ar(270,303,52)}
+    ${ar(415,468,70)}
+    ${ar(425,468,140)}
+    ${ar(580,623,90)}
+    <path d="M680,99 L680,133" stroke="var(--text-faint)" stroke-width="2" fill="none" marker-end="url(#dh)"></path>
+    ${ar(735,768,158)}
+  </svg>`;
+  const host = document.getElementById('dimFlow'); host.innerHTML = svg;
+  const out = document.getElementById('dimOut');
+  host.querySelectorAll('.dbox').forEach(g=>{
+    g.addEventListener('mouseenter', ()=>{ const d=info[g.dataset.k]; if(d) out.innerHTML='<b>'+d[0]+'。</b> '+d[1]; });
+  });
+})();
+
+/* ---------- 代码地图 ---------- */
+(function () {
+  const info = {
+    train:['scripts/train.py','入口：Hydra 读配置、建环境、选 PPO/ProprioAdapt、开训。第 10 章。'],
+    gen:['scripts/gen_grasp.py','生成抓取初始姿态缓存。流程第 ① 步。'],
+    play:['scripts/play.py','加载检查点、开 GUI 可视化策略。流程第 ④ 步。'],
+    deploy:['scripts/deploy.py','真机部署，键盘控制。第 06、10 章。'],
+    ppo:['algo/ppo/ppo.py','PPO：裁剪目标、KL 自适应学习率、训练循环。第 05 章。'],
+    exp:['algo/ppo/experience.py','经验缓冲 + GAE 反向递推 + 优势标准化。第 04 章。'],
+    padapt:['algo/padapt/padapt.py','ProprioAdapt：冻结教师、只训 TConv、MSE 蒸馏。第 06 章。'],
+    models:['algo/models/models.py','ActorCritic、MLP、ProprioAdaptTConv、高斯采样。第 03、07 章。'],
+    rms:['algo/models/running_mean_std.py','在线均值方差（Welford/Chan）。第 08 章。'],
+    env:['tasks/.../xhand_wave_env.py','环境：观测、奖励、域随机化、重置。第 02、09 章。'],
+    cfg:['tasks/.../xhand_wave_env_cfg.py','环境配置：维度、奖励权重、随机化范围。第 02、09 章。'],
+    yaml:['agents/ppo_cfg.yaml','PPO 超参与网络结构。第 05 章。'],
+    wrap:['wrapper/sharpa_wave_env_wrapper.py','GymStyleEnvWrapper：统一接口、动作裁剪、time_outs。第 10 章。'],
+  };
+  const A='#0071e3', P='#af52de', T='#30c8c9', G='#34c759', O='#ff9f0a';
+  function b(x,y,w,label,key,fill){
+    return `<g class="cbox" data-k="${key}" style="cursor:pointer">
+      <rect x="${x}" y="${y}" width="${w}" height="40" rx="9" fill="${fill}"></rect>
+      <text x="${x+w/2}" y="${y+25}" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">${label}</text></g>`;
+  }
+  const svg = `<svg viewBox="0 0 900 300" role="img" aria-label="代码地图">
+    <text x="20" y="20" font-size="12" font-weight="700" fill="${A}">入口脚本</text>
+    ${b(20,30,130,'train.py','train',A)}
+    ${b(165,30,130,'gen_grasp.py','gen',A)}
+    ${b(310,30,120,'play.py','play',A)}
+    ${b(445,30,120,'deploy.py','deploy',A)}
+    ${b(600,30,130,'env_wrapper','wrap',O)}
+    <text x="20" y="100" font-size="12" font-weight="700" fill="${P}">算法</text>
+    ${b(20,110,130,'ppo.py','ppo',P)}
+    ${b(165,110,130,'experience.py','exp',P)}
+    ${b(310,110,140,'padapt.py','padapt',P)}
+    <text x="480" y="100" font-size="12" font-weight="700" fill="${T}">模型</text>
+    ${b(480,110,130,'models.py','models',T)}
+    ${b(625,110,160,'running_mean_std.py','rms',T)}
+    <text x="20" y="185" font-size="12" font-weight="700" fill="${G}">环境 / 任务 / 配置</text>
+    ${b(20,195,180,'xhand_wave_env.py','env',G)}
+    ${b(215,195,200,'xhand_wave_env_cfg.py','cfg',G)}
+    ${b(430,195,150,'ppo_cfg.yaml','yaml',G)}
+  </svg>`;
+  const host = document.getElementById('codeMap'); host.innerHTML = svg;
+  const out = document.getElementById('mapOut');
+  host.querySelectorAll('.cbox').forEach(g=>{
+    g.addEventListener('click', ()=>{ const d=info[g.dataset.k]; if(d) out.innerHTML='<b>'+d[0]+'</b> — '+d[1]; });
+  });
+})();
+</script>
+</body>
+</html>

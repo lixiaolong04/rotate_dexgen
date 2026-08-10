@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>09 · 域随机化与重力课程</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 09 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 09 · 关键配角② · sim-to-real 的灵魂</div>
+  <h1>域随机化与重力课程</h1>
+  <p class="sub">为什么训练时要"故意把仿真搞乱"？因为只有见过千百种世界的策略，才不会在真实世界里水土不服。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<h2 id="why">一、现实落差与域随机化</h2>
+<div class="intuition">
+仿真再逼真，也和真机有差距：真实物体可能更重、摩擦更大、电机更软、还有你没建模的空气阻力。如果只在"一个完美仿真世界"里训练，策略会把这个世界的细节<strong>背得死死的</strong>，一上真机就懵。<br>
+域随机化（Domain Randomization）反其道而行：<strong>每一局都把物理参数随机抖一抖</strong>——这次物体重一点、下次滑一点、电机硬一点。策略被迫学会"不管世界什么样都能转好"的<strong>通用本领</strong>。真机不过是它见过的千万种世界里的普通一种。
+</div>
+
+<div class="note">
+<b>与第 06 章的呼应。</b> 这些被随机化的物理量（质量、摩擦、质心……）正是教师的<b>特权信息 priv_info</b>！训练时代码把随机出来的值写进 <code>priv_info_buf</code>，喂给 env_mlp 编码成隐变量 z。所以"域随机化"和"RMA"是一对：前者制造多样世界，后者让学生学会从历史<b>认出</b>自己身处哪种世界。
+</div>
+
+<h2 id="what">二、本项目随机化了什么</h2>
+<table>
+  <thead><tr><th>对象</th><th>范围（cfg）</th><th>怎么做</th></tr></thead>
+  <tbody>
+    <tr><td>物体质量</td><td>0.01 ~ 0.25 kg</td><td>均匀采样后写入刚体质量</td></tr>
+    <tr><td>质心偏移 CoM</td><td>各轴 ±0.01 m</td><td>给质心加随机偏移（模拟内部不均匀）</td></tr>
+    <tr><td>PD 增益 $k_p,k_d$</td><td>×[0.5, 2.0]</td><td>双峰采样（下详）</td></tr>
+    <tr><td>物体尺寸</td><td>scale_range</td><td>启动时缩放物体</td></tr>
+    <tr><td>随机外力</td><td>prob 0.25, scale 2</td><td>随机时刻给物体一记"冷不丁"的推力</td></tr>
+    <tr><td>关节角噪声</td><td>±0.02</td><td>模拟编码器读数误差（加在观测里）</td></tr>
+    <tr><td>摩擦</td><td>×[0.5, 2.0]（当前关闭）</td><td>代码因 Xhand 刚体索引问题暂时禁用</td></tr>
+  </tbody>
+</table>
+
+<span class="code-cap">xhand_wave_env.py · __init__（随机化即写入特权信息）</span>
+<pre><code class="lang-py">if self.cfg.randomize_mass:
+    rand_mass = torch.empty(num_envs).uniform_(0.01, 0.25)
+    self.set_mass(self.object, rand_mass, num_envs)
+    self.priv_info_buf[:, 4] = self.object.root_physx_view.get_masses()...  # 写进特权信息
+if self.cfg.randomize_com:
+    rand_com = torch.empty([num_envs,3]).uniform_(-0.01, 0.01)
+    self.set_com(self.object, rand_com, num_envs)
+    self.priv_info_buf[:, 5:8] = ...</code></pre>
+
+<h2 id="pd">三、PD 增益的"双峰采样"技巧</h2>
+<p>重置时随机缩放每个关节的 $k_p,k_d$。但代码没有简单地从 $U(0.5,2)$ 采样，而是用了一个巧妙的<strong>双峰</strong>方案：</p>
+<span class="code-cap">xhand_wave_env.py · _rand_pd_scales</span>
+<pre><code class="lang-py">rand_scale_s = Uniform(lower, 1).sample(...)   # 在 [0.5, 1] 取一个"变软"
+rand_scale_l = Uniform(1, upper).sample(...)   # 在 [1, 2]   取一个"变硬"
+mask = rand() > 0.5
+rand_scale = where(mask, rand_scale_s, rand_scale_l)  # 各 50% 概率二选一</code></pre>
+<div class="intuition">
+为什么不直接 $U(0.5,2)$？因为那样大量样本会落在 1 附近（几乎没扰动），等于"白随机"。双峰方案保证一半样本明确"偏软"、一半明确"偏硬"，<strong>强迫策略同时见识软硬两个极端</strong>，鲁棒性更强。形式上它在 $[0.5,1]$ 与 $[1,2]$ 两段上各占一半概率密度。
+</div>
+
+<h2 id="force">四、随机外力：冷不丁推一把</h2>
+<p>为了让策略抗扰动，每步以概率 $p=0.25$ 给物体施加一记随机力，且力会随时间指数衰减：</p>
+<div class="math-block">
+$$F \leftarrow F \cdot \rho^{\,\Delta t / \tau_d}, \qquad
+F_{\text{new}} \sim \mathcal{N}(0,1)\cdot m \cdot \kappa \ \ (\text{以概率 } p).$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · 随机外力</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义（cfg）</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\rho$</td><td>衰减底数 force_decay = 0.9。</td></tr>
+      <tr><td class="sym-col">$\tau_d$</td><td>衰减区间 force_decay_interval = 0.08 s。</td></tr>
+      <tr><td class="sym-col">$\kappa$</td><td>力的强度 force_scale = 2。</td></tr>
+      <tr><td class="sym-col">$m$</td><td>物体质量（力按质量缩放，保证不同质量受扰相当）。</td></tr>
+      <tr><td class="sym-col">$p$</td><td>每步施力概率 random_force_prob_scalar = 0.25。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="viz">
+  <div class="viz-title">随机化采样分布</div>
+  <div class="viz-sub">切换不同随机化项，点"采样 2000 次"看它的分布直方图。注意 PD 增益那个明显的"双峰"——中间凹下去正是有意为之。</div>
+  <canvas id="histCanvas"></canvas>
+  <div class="controls" id="histCtl"></div>
+  <div class="readout" id="histOut"></div>
+</div>
+
+<h2 id="curriculum">五、重力课程：从月球到地球</h2>
+<div class="intuition">
+一上来就用地球重力，物体很容易掉，策略学不动。于是用"<strong>课程学习</strong>"：开局重力小得像在月球（−0.05），物体几乎飘着，特别好转；等策略练到几乎没人掉物体了，就<strong>悄悄把重力调大一点点</strong>，再练……如此逐步加难，直到接近地球重力（上限 10）。先易后难，稳步进阶。
+</div>
+<span class="code-cap">xhand_wave_env.py · _get_dones（重力课程）</span>
+<pre><code class="lang-py"># 当上抛/掉落比例都极低，且开启课程、过了热身期：
+if drop_rate_upper < 5e-4 and drop_rate_lower < 5e-4 and gravity_curriculum and steps > 1000:
+    g = current_gravity_magnitude()
+    if g < 10:                              # 上限 10 m/s²
+        set_gravity( -(g + 0.05) )          # 每次加一点点</code></pre>
+
+<div class="viz">
+  <div class="viz-title">重力课程模拟</div>
+  <div class="viz-sub">拖"当前掉落率"。当它低于阈值 5e-4，点"前进"重力就涨 0.05；掉落率高时重力保持不变（甚至该回退）。看重力如何"踩着策略的进步"往上爬。</div>
+  <canvas id="gravCanvas"></canvas>
+  <div class="controls" id="gravCtl"></div>
+  <div class="readout" id="gravOut"></div>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> 域随机化让策略见识千万种世界（质量/质心/PD/外力/尺寸/噪声），这些随机量同时充当教师的特权信息；PD 用双峰采样逼出软硬极端；外力随机施加并指数衰减；重力课程先易后难、踩着策略进步逐步加难。至此九大主题的原理全部讲完——最后一章把它们串成端到端的实操流程。
+</div>
+
+<div class="pager">
+  <a href="08-normalization.html"><div class="dir">← 上一章</div><div class="ttl">08 · RunningMeanStd 在线归一化</div></a>
+  <a class="next" href="10-pipeline-deploy.html"><div class="dir">下一章 →</div><div class="ttl">10 · 完整流程与代码地图</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 09 章</footer>
+
+<script>
+function randn(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+/* ---------- 采样分布直方图 ---------- */
+(function () {
+  const cv = document.getElementById('histCanvas');
+  const out = document.getElementById('histOut');
+  const specs = {
+    mass: { name:'物体质量 (kg)', lo:0.01, hi:0.25, sample:()=> 0.01 + Math.random()*0.24, desc:'均匀分布 U(0.01, 0.25)，每种质量等概率出现。' },
+    com:  { name:'质心偏移 (m, 单轴)', lo:-0.01, hi:0.01, sample:()=> -0.01 + Math.random()*0.02, desc:'均匀分布 U(−0.01, 0.01)，模拟物体内部质量不均。' },
+    pd:   { name:'PD 增益缩放 ×', lo:0.5, hi:2.0, sample:()=> { const s=0.5+Math.random()*0.5, l=1+Math.random()*1.0; return Math.random()>0.5?s:l; }, desc:'双峰：一半落在 [0.5,1]（偏软），一半落在 [1,2]（偏硬），中间 1 附近反而稀疏。' },
+    force:{ name:'随机外力 (×质量·κ)', lo:-3, hi:3, sample:()=> randn()*1, desc:'高斯 N(0,1)，再乘质量与强度。多数小、偶尔大，模拟随机扰动。' },
+  };
+  let ctx, key='mass', data=[];
+  function sample(n){ const s=specs[key]; for(let i=0;i<n;i++) data.push(s.sample()); draw(); }
+  function draw(){
+    const T = Viz.theme(); const s = specs[key];
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 40, y: 16, w: W-60, h: H-46 };
+    const B = 36; const bins = new Array(B).fill(0);
+    data.forEach(v=>{ let idx = Math.floor(map(clamp(v,s.lo,s.hi), s.lo, s.hi, 0, B)); if(idx>=B)idx=B-1; if(idx<0)idx=0; bins[idx]++; });
+    const mx = Math.max(1, ...bins);
+    const bw = box.w/B;
+    for(let i=0;i<B;i++){
+      const h = bins[i]/mx*box.h;
+      const x = box.x+i*bw;
+      const grad = ctx.createLinearGradient(0, box.y+box.h-h, 0, box.y+box.h);
+      grad.addColorStop(0, T.accent); grad.addColorStop(1, T.teal);
+      ctx.fillStyle = grad; ctx.fillRect(x+1, box.y+box.h-h, Math.max(1,bw-2), h);
+    }
+    ctx.strokeStyle=T.faint; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(box.x,box.y+box.h); ctx.lineTo(box.x+box.w,box.y+box.h); ctx.stroke();
+    Viz.text(ctx, s.lo.toFixed(2), box.x, box.y+box.h+15, T.faint,'11px monospace','left');
+    Viz.text(ctx, s.hi.toFixed(2), box.x+box.w, box.y+box.h+15, T.faint,'11px monospace','right');
+    Viz.text(ctx, s.name, box.x+box.w/2, box.y+box.h+15, T.soft,'12px -apple-system','center');
+    out.innerHTML = `<b>${s.name}</b>：已采样 <b>${data.length}</b> 次。${s.desc}`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 230); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('histCtl');
+  Object.keys(specs).forEach((k,i)=> Viz.button(ctl, specs[k].name.split(' ')[0], ()=>{ key=k; data=[]; draw(); }, i!==0));
+  Viz.button(ctl, '采样 2000 次', ()=>sample(2000));
+  Viz.button(ctl, '清空', ()=>{ data=[]; draw(); }, true);
+})();
+
+/* ---------- 重力课程模拟 ---------- */
+(function () {
+  const cv = document.getElementById('gravCanvas');
+  const out = document.getElementById('gravOut');
+  let ctx, g = 0.05, dropRate = 0.0002, hist = [0.05], steps=0;
+  const THRESH = 5e-4, GMAX = 10;
+  function stepN(n){
+    for(let k=0;k<n;k++){
+      steps++;
+      if (dropRate < THRESH && g < GMAX) g = Math.min(GMAX, g + 0.05);
+      hist.push(g); if(hist.length>160) hist.shift();
+    }
+    draw();
+  }
+  function draw(){
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 46, y: 16, w: W-66, h: H-44 };
+    Viz.gridlines(ctx, box, 5, 4);
+    const X = i => box.x + (hist.length<=1?0:i/(hist.length-1)*box.w);
+    const Y = v => box.y + box.h - map(v, 0, 10.5, 0, box.h);
+    // earth gravity ref
+    ctx.setLineDash([5,4]); ctx.strokeStyle=T.orange; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(box.x,Y(9.81)); ctx.lineTo(box.x+box.w,Y(9.81)); ctx.stroke(); ctx.setLineDash([]);
+    Viz.text(ctx,'地球 9.81', box.x+box.w, Y(9.81)-5, T.orange,'11px -apple-system','right');
+    Viz.fillCurve(ctx, hist.map((v,i)=>[X(i),Y(v)]), box.y+box.h, T.accent, 0.12);
+    Viz.plot(ctx, hist.map((v,i)=>[X(i),Y(v)]), T.accent, 2.5);
+    for(let j=0;j<=10;j+=2) Viz.text(ctx, j.toString(), box.x-6, Y(j)+4, T.faint,'10px monospace','right');
+    Viz.text(ctx,'重力 (m/s²)', box.x-6, box.y+10, T.faint,'11px -apple-system','right');
+    Viz.text(ctx,'训练推进 →', box.x+box.w, box.y+box.h+15, T.faint,'11px -apple-system','right');
+    const can = dropRate < THRESH && g < GMAX;
+    out.innerHTML = `当前重力 = <b>${g.toFixed(2)}</b> m/s²，掉落率 = <b>${dropRate.toExponential(1)}</b>（阈值 ${THRESH}）。判定：<b>${ g>=GMAX ? '已达上限 10，不再增加' : (can?'掉落率够低 → 可以加难（重力上调）':'掉落率偏高 → 重力保持，让策略再练练')}</b>。`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 220); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('gravCtl');
+  Viz.slider(ctl, { label:'当前掉落率', min:0, max:0.002, value:0.0002, step:0.00005, fmt:v=>(+v).toExponential(1), oninput:v=>{dropRate=v;draw();} });
+  Viz.button(ctl, '前进 20 步', ()=>stepN(20));
+  Viz.button(ctl, '重置', ()=>{ g=0.05; hist=[0.05]; steps=0; draw(); }, true);
+})();
+</script>
+</body>
+</html>

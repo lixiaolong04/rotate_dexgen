@@ -1,0 +1,8 @@
+torch
+numpy
+termcolor
+tensorboardX
+pytest
+pynput          # 键盘状态机(e/w/q/t)。依赖 evdev(需 build-essential+python3-dev+libevdev-dev 编译, Dockerfile 已装)
+                # 容器内抓键还需 X11 转发(docker-compose.yml 已配 /tmp/.X11-unix+DISPLAY); 不想用键盘则 --no_keyboard。
+# hand_controller==0.1.49  (从 Xhand 官方 whl 安装, 见 docs/superpowers, Task B1)

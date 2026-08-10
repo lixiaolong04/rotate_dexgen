@@ -1,0 +1,5 @@
+<!DOCTYPE FilterScript>
+<FilterScript>
+  <!-- Convex Hull takes no parameters in Meshlabserver -->
+  <filter name="Convex Hull"/>
+</FilterScript>

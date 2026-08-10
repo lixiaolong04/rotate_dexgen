@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>14 · 入口脚本逐行导读</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 14 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 14 · Part B 入口</div>
+  <h1>入口脚本逐行导读</h1>
+  <p class="sub">读完本章，你能回答：<code>train.py</code> 第一行为什么必须是 <code>AppLauncher</code>？<code>hydra_task_config</code> 从哪加载配置？<code>gen_grasp.py</code> 为什么只发零动作？<code>play.py</code> 和训练差在哪 15 处？</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>前置阅读。</b> 建议先读<a href="13-project-map.html">第 13 章</a>（目录树）和<a href="10-pipeline-deploy.html">第 10 章</a>（端到端命令）。PPO 训练循环细节见<a href="05-ppo.html">第 05 章</a>；配置从哪来见下一章<a href="15-config-system.html">第 15 章</a>。</div>
+
+<h2 id="zero">零、读代码之前</h2>
+<p>本章会打开 <code>train.py</code> 逐段看。你不需要背下每一行，但要能回答：<strong>仿真谁先启动？配置从哪来？环境谁创建？训练谁开始？</strong></p>
+
+<div class="glossary">
+  <h4>本章术语速查</h4>
+  <dl>
+    <dt>AppLauncher</dt>
+    <dd>Isaac Sim 的「开机按钮」。必须在 import <code>pxr</code>、物理引擎之前调用，否则进程会崩或挂起。</dd>
+    <dt>argparse</dt>
+    <dd>Python 标准库，解析你在命令行写的 <code>--num_envs 10</code> 等参数，放进 <code>args_cli</code> 对象。</dd>
+    <dt>Hydra</dt>
+    <dd>配置框架：根据 <code>--task</code> 自动加载对应的 env cfg 和 agent yaml，并支持 <code>env.xxx=yyy</code> 覆盖。</dd>
+    <dt>装饰器 <code>@hydra_task_config</code></dt>
+    <dd>写在 <code>def main(...)</code> 上面的「补丁」：调用 <code>main()</code> 前，Hydra 先把两个配置准备好，作为参数传进来。</dd>
+    <dt>Wrapper（包装器）</dt>
+    <dd><code>GymStyleEnvWrapper</code> 在真环境外包一层，统一动作裁剪、观测格式，让 PPO 不用关心 IsaacLab 细节。</dd>
+    <dt>checkpoint</dt>
+    <dd>已训练权重的存档（<code>.pth</code>）。<code>restore_train</code> 用于续训；<code>restore_test</code> 用于 play 推理。</dd>
+    <dt>headless</dt>
+    <dd>无图形界面跑仿真，省显存；服务器和笔记本训练通常必加 <code>--headless</code>。</dd>
+    <dt>VecEnv（向量化环境）</dt>
+    <dd>多个环境并行，一次 <code>step</code> 处理整批动作张量 <code>(num_envs, 21)</code>，而不是 for 循环。</dd>
+  </dl>
+</div>
+
+<div class="intuition">
+读 <code>train.py</code> 像看<strong>飞机起飞检查单</strong>：先点火（AppLauncher）→ 装燃油配置（Hydra）→ 乘客登机（gym.make）→ 机长就位（PPO）→ 起飞（<code>agent.train()</code>）。<code>gen_grasp.py</code> 和 <code>play.py</code> 是同一型号的飞机，但目的地不同。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么 <code>train.py</code> 文件中间有一条注释 <code>"""Rest everything follows."""</code>？<br>
+  这不是随便写的——<strong>这条线以上</strong>只能做启动仿真所需的事；<strong>线以下</strong>才能 import IsaacLab / gym / 项目模块。顺序错了，Isaac Sim 5.x 经常直接报错退出。
+</div>
+
+<h2 id="overview">一、三个入口，三种使命</h2>
+<div class="intuition">
+把 <code>rl_isaaclab/scripts/</code> 想成工厂的三条流水线：<strong>gen_grasp.py</strong> 是「备料车间」——只让手保持当前姿态、让物理引擎把合法抓握姿态存进缓存；<strong>train.py</strong> 是「主生产线」——PPO 或 ProprioAdapt 在这里跑几百万步；<strong>play.py</strong> 是「质检窗口」——加载 checkpoint，关随机化，开 GUI 看策略转得稳不稳。三条线共用同一套「启动仿真 → Hydra 读配置 → gym.make → Wrapper」的前半段，后半段分道扬镳。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">入口脚本速查</div>
+  <table>
+    <thead><tr><th>脚本</th><th>典型任务 ID</th><th>核心出口</th><th>产物</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>gen_grasp.py</code></td><td><code>Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0</code></td><td><code>while True: step(zero_actions)</code></td><td><code>cache/xhand_grasp_linspace*.npy</code></td></tr>
+      <tr><td class="sym-col"><code>train.py</code></td><td><code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td><td><code>agent.train()</code></td><td><code>logs/.../stage1_nn/best.pth</code></td></tr>
+      <tr><td class="sym-col"><code>play.py</code></td><td><code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td><td><code>agent.test()</code></td><td>无（仅可视化）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="applauncher">二、所有脚本的第一幕：AppLauncher</h2>
+<p>三个文件的开头<strong>完全一致</strong>：在 import 任何 IsaacLab 模块之前，先解析 CLI、启动 Omniverse 应用。这是 Isaac Sim 的硬性要求——<code>pxr</code>、物理引擎、USD stage 都依赖已启动的 <code>simulation_app</code>。</p>
+
+<span class="code-cap">train.py · 第 7–33 行（gen_grasp / play 同构）</span>
+<pre><code class="lang-py">import argparse
+import sys
+
+from isaaclab.app import AppLauncher
+
+parser = argparse.ArgumentParser(description="Train an RL agent.")
+parser.add_argument("--num_envs", type=int, default=16384, ...)
+parser.add_argument("--task", type=str, default=None, ...)
+# ... 更多 train/play 专用参数 ...
+AppLauncher.add_app_launcher_args(parser)
+args_cli, hydra_args = parser.parse_known_args()
+
+sys.argv = [sys.argv[0]] + hydra_args   # 把剩余参数留给 Hydra
+
+app_launcher = AppLauncher(args_cli)
+simulation_app = app_launcher.app</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">AppLauncher 块 · 逐行白话</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>parser = ArgumentParser(...)</code></td><td>准备一个「命令行表单」，后面往上面挂选项。</td></tr>
+      <tr><td><code>parser.add_argument("--num_envs", ...)</code></td><td>用户可写 <code>--num_envs 10</code>；不写则用 default。</td></tr>
+      <tr><td><code>AppLauncher.add_app_launcher_args(parser)</code></td><td>Isaac 官方参数也挂上来，你不用自己实现 <code>--headless</code>。</td></tr>
+      <tr><td><code>args_cli, hydra_args = parse_known_args()</code></td><td>「认识的」和「不认识的」分开装两个袋子。</td></tr>
+      <tr><td><code>sys.argv = [脚本名] + hydra_args</code></td><td>骗过 Hydra：让它以为自己只收到 Hydra 参数。</td></tr>
+      <tr><td><code>simulation_app = app_launcher.app</code></td><td>仿真引擎已启动；全局变量，文件末尾要 <code>.close()</code>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tip">
+<b>为什么 <code>parse_known_args</code>？</b> <code>--task</code>、<code>--num_envs</code> 等是我们自己定义的；Hydra 还有 <code>env.xxx=yyy</code> 这类覆盖参数。拆成 <code>args_cli</code> 和 <code>hydra_args</code> 后，再清空 <code>sys.argv</code> 只留 Hydra 部分，避免 argparse 和 Hydra 抢参数。</div>
+
+<p><code>"""Rest everything follows."""</code> 这行注释之后才开始 import <code>gymnasium</code>、<code>torch</code>、项目模块——顺序不能乱。</p>
+
+<h2 id="train">三、train.py 逐段精读</h2>
+<p>仓库里 <code>train.py</code> 共 118 行（含空行与版权头）。下面<strong>完整 walk-table</strong>按行号分组覆盖全文；之后 3.1–3.7 仍保留主题式精读，方便对照。</p>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 全文导读 · 第 1–33 行（启动仿真，线以上）</div>
+  <table>
+    <thead><tr><th>代码（行号）</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td>1–4 版权注释</td><td>许可证说明，不影响运行，可跳过。</td></tr>
+      <tr><td>7–9 <code>import argparse, sys, shutil</code></td><td>引入工具：<code>argparse</code> 解析命令行；<code>sys</code> 改进程参数；<code>shutil</code> 删目录/复制文件（后面用）。</td></tr>
+      <tr><td>11 <code>from isaaclab.app import AppLauncher</code></td><td>只 import「启动器」类——此时还<strong>不能</strong> import 其他 IsaacLab 仿真模块。</td></tr>
+      <tr><td>14 <code>ArgumentParser(...)</code></td><td>创建命令行解析器，描述文字是 "Train an RL agent."。</td></tr>
+      <tr><td>15–23 各 <code>add_argument</code></td><td>定义本项目专用参数：<code>--num_envs</code> 并行环境数、<code>--task</code> 任务名、<code>--seed</code> 随机种子、<code>--cache</code> 抓取缓存路径、<code>--load_path</code> 权重路径、<code>--max_agent_steps</code> 训练步上限、<code>--algorithm</code> PPO 或 ProprioAdapt、<code>--resume</code> 续训开关、<code>--finetune_dataset_dir</code> 预留微调目录。</td></tr>
+      <tr><td>25 <code>AppLauncher.add_app_launcher_args(parser)</code></td><td>把 Isaac Sim 自己的参数（如 <code>--headless</code>、<code>--device</code>）也挂到同一 parser 上。</td></tr>
+      <tr><td>26 <code>parse_known_args()</code></td><td>解析命令行：<strong>认识的</strong>进 <code>args_cli</code>，<strong>不认识的</strong>（Hydra 的 <code>env.xxx=</code>）进 <code>hydra_args</code>。</td></tr>
+      <tr><td>29 <code>sys.argv = [sys.argv[0]] + hydra_args</code></td><td>把进程参数改成只剩脚本名 + Hydra 参数，避免 Hydra 和 argparse 打架。</td></tr>
+      <tr><td>32–33 <code>AppLauncher</code> → <code>simulation_app</code></td><td>真正启动 Omniverse/Isaac Sim，得到全局 <code>simulation_app</code> 句柄；后面所有仿真都依赖它。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 全文导读 · 第 35–57 行（线以下：import 与 PyTorch 开关）</div>
+  <table>
+    <thead><tr><th>代码（行号）</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td>35 注释 <code>Rest everything follows</code></td><td>分界线：从这里开始才能安全 import 仿真相关库。</td></tr>
+      <tr><td>37–40 <code>gymnasium, os, torch, datetime</code></td><td>强化学习接口、文件路径、深度学习框架、打时间戳建日志目录。</td></tr>
+      <tr><td>42–45 PPO / ProprioAdapt / Wrapper / ConfigWrapper</td><td>训练算法类和配置包装器；<code>eval(algo)</code> 需要类名已在内存里。</td></tr>
+      <tr><td>47 <code>DirectRLEnvCfg</code></td><td>类型标注：告诉读者 <code>main</code> 的第一个参数是环境配置 dataclass。</td></tr>
+      <tr><td>49–50 任务包 + <code>hydra_task_config</code></td><td><code>import ...inhand_rotate</code> 触发 gym 注册；引入 Hydra 装饰器。</td></tr>
+      <tr><td>52 PLACEHOLDER 注释</td><td>IsaacLab 模板占位，扩展用，可忽略。</td></tr>
+      <tr><td>54–57 <code>torch.backends.*</code></td><td>打开 TF32 加速矩阵乘；关闭严格确定性；训练更快，复现性略降（业界常见取舍）。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 全文导读 · 第 59–76 行（main 开头：CLI 覆盖配置）</div>
+  <table>
+    <thead><tr><th>代码（行号）</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td>59–60 <code>@hydra_task_config</code> + <code>def main(env_cfg, agent_cfg)</code></td><td>装饰器根据 <code>args_cli.task</code> 加载配置；你调用 <code>main()</code> 时 Hydra 自动填入两个已合并的默认配置。</td></tr>
+      <tr><td>61 <code>shutil.rmtree('outputs/')</code></td><td>删掉 Hydra 默认临时输出目录，避免磁盘堆垃圾（删失败会报错，play/gen_grasp 有的用 <code>ignore_errors</code>）。</td></tr>
+      <tr><td>62 <code>env_cfg.scene.num_envs = ...</code></td><td>命令行 <code>--num_envs</code> 覆盖场景里并行环境数；没传则用 cfg 默认 16384。</td></tr>
+      <tr><td>63–64 <code>max_agent_steps</code> / <code>num_actors</code></td><td>训练总步数上限、PPO 里的 actor 数；<code>num_actors</code> 应与 <code>num_envs</code> 一致。</td></tr>
+      <tr><td>65–66 <code>seed</code></td><td>随机种子同时写给算法和环境，保证 numpy/torch/仿真随机可复现。</td></tr>
+      <tr><td>67–68 <code>device</code></td><td>GPU 设备字符串（如 <code>cuda:0</code>）写给环境和 agent。</td></tr>
+      <tr><td>69–70 <code>algo</code> / <code>load_path</code></td><td>选 PPO 还是 ProprioAdapt；蒸馏或续训时要加载的 <code>.pth</code> 路径。</td></tr>
+      <tr><td>71 <code>grasp_cache_path</code></td><td><code>--cache</code> 可换一批抓取起手式缓存的前缀路径。</td></tr>
+      <tr><td>72 <code>minibatch_size = min(num_envs*8, 32768)</code></td><td>按并行数自动缩小 mini-batch，避免笔记本 10 env 时 batch 太大无法整除。</td></tr>
+      <tr><td>73–75 ProprioAdapt 重力分支</td><td>蒸馏阶段<strong>强制</strong>真实重力 -9.81，关掉重力课程；否则 student 在近失重里学，上不了真机。</td></tr>
+      <tr><td>76 <code>ConfigWrapper(agent_cfg, env_cfg)</code></td><td>把算法 dict 和环境 dataclass 捆成 <code>config.train</code> / <code>config.task</code> 给 PPO 用。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 全文导读 · 第 78–87 行（日志目录）</div>
+  <table>
+    <thead><tr><th>代码（行号）</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td>79 <code>log_root_path = logs/{experiment_name}</code></td><td>日志根目录，<code>experiment_name</code> 来自 yaml（默认 <code>debug</code>）。</td></tr>
+      <tr><td>80–82 时间戳子目录</td><td>每次训练建 <code>2026-06-05_14-30-00</code> 这种文件夹，避免覆盖上次实验。</td></tr>
+      <tr><td>83–86 ProprioAdapt 目录复用</td><td>若 load_path 路径里含 <code>stage1_nn</code>，把 stage2 日志写到与 stage1 <strong>同级</strong>，方便管理。</td></tr>
+      <tr><td>87 <code>print(... log_dir)</code></td><td>终端打印最终实验目录，方便你去找 <code>.pth</code>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 全文导读 · 第 89–111 行（环境、智能体、训练、清理）</div>
+  <table>
+    <thead><tr><th>代码（行号）</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td>90 <code>gym.make(task, cfg=env_cfg)</code></td><td>按任务 ID 创建 Xhand 仿真环境，注入已覆盖的 <code>env_cfg</code>；<code>render_mode=None</code> 不强制开渲染。</td></tr>
+      <tr><td>91 <code>GymStyleEnvWrapper(...)</code></td><td>外包一层：裁剪动作、统一 obs 格式、构造时自动 <code>reset()</code> 一次。</td></tr>
+      <tr><td>92 <code>eval(algo)(env, ...)</code></td><td>动态创建 <code>PPO</code> 或 <code>ProprioAdapt</code> 实例，传入环境、日志目录、完整配置。</td></tr>
+      <tr><td>94–98 复制 cfg 快照</td><td>从 gym spec 反查 cfg 文件路径，复制进 log 目录，保证日后能复现「当时用的配置」。 </td></tr>
+      <tr><td>101–105 <code>resume</code> 或 ProprioAdapt → <code>restore_train</code></td><td>从 checkpoint 恢复权重和训练用归一化统计；蒸馏<strong>必须</strong>加载 stage1。</td></tr>
+      <tr><td>108 <code>agent.train()</code></td><td>进入 PPO 主循环：rollout → 算 advantage → 更新网络，直到 <code>max_agent_steps</code>。</td></tr>
+      <tr><td>111 <code>env.close()</code></td><td>关闭仿真环境，释放 GPU/物理资源。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">train.py 全文导读 · 第 113–117 行（程序入口）</div>
+  <table>
+    <thead><tr><th>代码（行号）</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td>113 <code>if __name__ == "__main__":</code></td><td>仅当「直接运行这个文件」时执行下面代码；被别的文件 import 时不会误启动训练。</td></tr>
+      <tr><td>115 <code>main()</code></td><td>调用被 Hydra 装饰的 main；内部完成训练全流程。</td></tr>
+      <tr><td>117 <code>simulation_app.close()</code></td><td>关掉 Isaac Sim 进程；<strong>漏掉这行</strong> 时终端可能卡住不退出。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>main()</code> 没有写参数，<code>env_cfg</code> 和 <code>agent_cfg</code> 从哪来？<br>
+  是 <code>@hydra_task_config</code> 装饰器「魔法」：它把原来的 <code>main</code> 包了一层，你先 <code>main()</code> 无参调用，装饰器内部用 Hydra 加载配置后再调用真正的 <code>main(env_cfg, agent_cfg)</code>。
+</div>
+
+<h3 id="train-imports">3.1 副作用 import 与算法类</h3>
+<span class="code-cap">train.py · import 块</span>
+<pre><code class="lang-py">from rl_isaaclab.algo.ppo.ppo import PPO
+from rl_isaaclab.algo.padapt.padapt import ProprioAdapt
+from rl_isaaclab.wrapper.sharpa_wave_env_wrapper import GymStyleEnvWrapper
+from rl_isaaclab.wrapper.config_wrapper import ConfigWrapper
+
+import rl_isaaclab.tasks.inhand_rotate   # 触发 gym.register
+from isaaclab_tasks.utils.hydra import hydra_task_config</code></pre>
+<p><code>import rl_isaaclab.tasks.inhand_rotate</code> 执行 <code>__init__.py</code> 里的 <code>gym.register(...)</code>，详见<a href="15-config-system.html">第 15 章</a>。<code>PPO</code> 与 <code>ProprioAdapt</code> 必须在此 import，后面 <code>eval(agent_cfg["algo"])</code> 才能找到类名。</p>
+
+<div class="walk-table">
+  <div class="walktitle">import 块 · 每个 from/import 干什么</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>from ...ppo import PPO</code></td><td>引入 Stage 1 教师策略训练器类。</td></tr>
+      <tr><td><code>from ...padapt import ProprioAdapt</code></td><td>引入 Stage 2 蒸馏训练器类。</td></tr>
+      <tr><td><code>GymStyleEnvWrapper</code></td><td>环境适配层，PPO 和 gen_grasp 都用。</td></tr>
+      <tr><td><code>ConfigWrapper</code></td><td>把 agent yaml 和 env cfg 捆成一个对象。</td></tr>
+      <tr><td><code>import rl_isaaclab.tasks.inhand_rotate</code></td><td>副作用：注册所有 inhand_rotate 任务到 gym。</td></tr>
+      <tr><td><code>hydra_task_config</code></td><td>装饰器工厂，来自 IsaacLab 任务工具包。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="train-hydra">3.2 @hydra_task_config 装饰器</h3>
+<span class="code-cap">train.py · main 入口</span>
+<pre><code class="lang-py">@hydra_task_config(args_cli.task, "agent_cfg_entry_point")
+def main(env_cfg: DirectRLEnvCfg, agent_cfg: dict):
+    ...</code></pre>
+<p>装饰器根据 <code>--task</code> 对应的 gym spec，读取两个 entry point：</p>
+<ul>
+  <li><code>env_cfg_entry_point</code> → 实例化 <code>XhandWaveEnvCfg</code>（Python dataclass）</li>
+  <li><code>agent_cfg_entry_point</code> → 加载 <code>ppo_cfg.yaml</code>（dict）</li>
+</ul>
+<p>调用 <code>main()</code> 时，Hydra 已把 YAML 与 dataclass 合并好，作为两个参数传入。</p>
+
+<div class="intuition">
+Hydra 像餐厅<strong>套餐默认值</strong>：<code>--task</code> 决定点哪套（Xhand 训练 / 抓取）；YAML 和 py cfg 是套餐内容；你在命令行加的 <code>--num_envs 10</code> 是「少辣」「加饭」——最后厨房（<code>main</code>）收到的是已经改好的单子。
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">@hydra_task_config 两行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>@hydra_task_config(args_cli.task, "agent_cfg_entry_point")</code></td><td>第一个参数：任务名（来自命令行 <code>--task</code>）；第二个：去 gym 注册表里找 agent 配置的键名。</td></tr>
+      <tr><td><code>def main(env_cfg, agent_cfg)</code></td><td>函数体里拿到的已是「默认配置对象」，还没被 train.py 里 CLI 覆盖。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="train-cli">3.3 CLI 覆盖配置</h3>
+<span class="code-cap">train.py · CLI → cfg 映射</span>
+<pre><code class="lang-py">shutil.rmtree('outputs/')
+env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+agent_cfg["algorithm"]["max_agent_steps"] = args_cli.max_agent_steps if ... else ...
+agent_cfg["algorithm"]["num_actors"] = args_cli.num_envs if ... else ...
+agent_cfg["seed"] = args_cli.seed if args_cli.seed is not None else agent_cfg['seed']
+env_cfg.seed = agent_cfg["seed"]
+env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+agent_cfg["device"] = args_cli.device if args_cli.device is not None else agent_cfg["device"]
+agent_cfg["algo"] = args_cli.algorithm if args_cli.algorithm is not None else agent_cfg["algo"]
+agent_cfg["load_path"] = args_cli.load_path if args_cli.load_path is not None else agent_cfg["load_path"]
+env_cfg.grasp_cache_path = args_cli.cache if args_cli.cache is not None else env_cfg.grasp_cache_path
+agent_cfg["algorithm"]['minibatch_size'] = min([args_cli.num_envs * 8, 32768])</code></pre>
+
+<div class="symtable">
+  <div class="symtitle">train.py CLI 参数</div>
+  <table>
+    <thead><tr><th>CLI</th><th>写入位置</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>--num_envs</code></td><td><code>env_cfg.scene.num_envs</code> + <code>num_actors</code></td><td>并行环境数；RTX 5070 Ti 12GB 建议 10 起步</td></tr>
+      <tr><td class="sym-col"><code>--task</code></td><td>装饰器 + <code>gym.make</code></td><td>如 <code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td></tr>
+      <tr><td class="sym-col"><code>--seed</code></td><td><code>agent_cfg["seed"]</code> + <code>env_cfg.seed</code></td><td>复现实验</td></tr>
+      <tr><td class="sym-col"><code>--cache</code></td><td><code>env_cfg.grasp_cache_path</code></td><td>抓取缓存路径前缀</td></tr>
+      <tr><td class="sym-col"><code>--load_path</code></td><td><code>agent_cfg["load_path"]</code></td><td>checkpoint；ProprioAdapt 必填 stage1</td></tr>
+      <tr><td class="sym-col"><code>--algorithm</code></td><td><code>agent_cfg["algo"]</code></td><td><code>PPO</code> 或 <code>ProprioAdapt</code></td></tr>
+      <tr><td class="sym-col"><code>--max_agent_steps</code></td><td><code>algorithm.max_agent_steps</code></td><td>训练步数上限（默认 3e8）</td></tr>
+      <tr><td class="sym-col"><code>--resume</code></td><td>触发 <code>restore_train</code></td><td>从 checkpoint 续训</td></tr>
+      <tr><td class="sym-col"><code>--headless</code></td><td>AppLauncher</td><td>无 GUI，训练必开</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么 <code>--num_envs</code> 要同时改 <code>env_cfg.scene.num_envs</code> 和 <code>agent_cfg["algorithm"]["num_actors"]</code>？<br>
+  前者告诉 Isaac Sim「开几个并行仿真窗口」；后者告诉 PPO「rollout 时有几条并行轨迹」。两个数不一致会导致张量 shape 对不上、直接报错或 silent bug。
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">CLI 覆盖块 · 典型模式 <code>x if 命令行给了 else 用默认</code></div>
+  <table>
+    <thead><tr><th>模式</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>args_cli.num_envs if args_cli.num_envs is not None else env_cfg...</code></td><td>Python 三元表达式：命令行传了就用命令行，没传就保留配置文件默认值。</td></tr>
+      <tr><td>对 agent 和 env 各写一遍 seed/device</td><td>算法随机性（初始化网络）和环境随机性（物体位置）要同一个种子才完全可复现。</td></tr>
+      <tr><td><code>min(num_envs * 8, 32768)</code></td><td>小显存机器：10 个 env → minibatch 80；大数据中心：最多 cap 在 32768。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="train-proprio">3.4 ProprioAdapt 专用重力修正</h3>
+<span class="code-cap">train.py · 蒸馏阶段重力</span>
+<pre><code class="lang-py">if agent_cfg["algo"] == "ProprioAdapt":
+    env_cfg.gravity_curriculum = False
+    env_cfg.sim.gravity = (0.0, 0.0, -9.81)  # 蒸馏必须在真实重力下!</code></pre>
+<p>Stage 1 PPO 训练时重力从 -0.05 起步做课程；关课程后若仍用近失重，student 在 Stage 2 学不到真机条件。因此蒸馏分支<strong>强制</strong>真实重力。</p>
+
+<div class="intuition">
+Stage 1 像在室内游泳池学换气（近失重，容易抓稳）；Stage 2 要下海（真重力）。如果蒸馏时还在游泳池，学生以为「物体总是很轻」，上真机就摔笔。
+</div>
+
+<h3 id="train-config">3.5 ConfigWrapper 与日志目录</h3>
+<span class="code-cap">train.py · ConfigWrapper + log_dir</span>
+<pre><code class="lang-py">config = ConfigWrapper(agent_cfg, env_cfg)
+
+log_root_path = os.path.abspath(os.path.join("logs", agent_cfg["algorithm"]["experiment_name"]))
+log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_dir = os.path.join(log_root_path, log_dir)
+if agent_cfg["algo"] in ["ProprioAdapt"]:
+    load_path_split = agent_cfg["load_path"].split("/")
+    if agent_cfg["algorithm"]["experiment_name"] in load_path_split and "stage1_nn" in load_path_split:
+        log_dir = os.path.join(*(load_path_split[-5:-2]))  # 复用 stage1 同级目录</code></pre>
+<p><code>ConfigWrapper</code> 把 agent dict 和 env dataclass 捆成 <code>.train</code> / <code>.task</code>，供 PPO 读取（见<a href="15-config-system.html">第 15 章</a>）。ProprioAdapt 会尝试把 log 写到与 stage1 同级的目录，方便 stage2_nn 和 stage1_nn 并列。</p>
+
+<h3 id="train-env">3.6 gym.make 与 Wrapper</h3>
+<span class="code-cap">train.py · 环境创建</span>
+<pre><code class="lang-py">env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions)</code></pre>
+<p><code>gym.make</code> 根据注册表实例化 <code>XhandWaveInhandRotateEnv</code>，传入已覆盖的 <code>env_cfg</code>。<code>GymStyleEnvWrapper</code> 做三件事：把 IsaacLab env 适配成 PPO 需要的 <code>VecEnv</code> 接口；按 <code>clip_actions</code>（默认 1.0）裁剪动作；构造时自动 <code>reset()</code> 一次。</p>
+
+<div class="walk-table">
+  <div class="walktitle">gym.make + Wrapper · 两行</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>gym.make(args_cli.task, cfg=env_cfg, ...)</code></td><td>任务名必须是已注册 ID；<code>cfg=</code> 把改好的配置灌进环境构造函数。</td></tr>
+      <tr><td><code>GymStyleEnvWrapper(env, clip_actions=...)</code></td><td>包装后 <code>env.step</code> 返回 PPO 期望的 dict obs；动作超出 [-1,1] 会被裁掉。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="train-agent">3.7 eval(algo) 与 checkpoint</h3>
+<span class="code-cap">train.py · 智能体与训练</span>
+<pre><code class="lang-py">agent = eval(agent_cfg["algo"])(env, output_dir=log_dir, full_config=config)
+
+spec = gym.spec(args_cli.task)
+env_cfg_file = spec.kwargs.get("env_cfg_entry_point", None).split(":")[0].replace(".", "/") + ".py"
+agent_cfg_file = spec.kwargs.get("agent_cfg_entry_point", None).replace(".", "/").replace(":", "/").replace("/yaml", ".yaml")
+shutil.copy(env_cfg_file, os.path.join(log_dir, f"env_cfg_{agent_cfg['algo']}.py"))
+shutil.copy(agent_cfg_file, os.path.join(log_dir, f"agent_cfg_{agent_cfg['algo']}.yaml"))
+
+if args_cli.resume or agent_cfg["algo"] in ["ProprioAdapt"]:
+    resume_path = agent_cfg["load_path"]
+    agent.restore_train(resume_path)
+
+agent.train()
+env.close()</code></pre>
+<p><code>eval("PPO")</code> 等价于 <code>PPO(...)</code>。训练前会把当时用的 env/agent 配置<strong>快照</strong>复制进 log 目录，便于复现。<code>restore_train</code> 加载 model + running_mean_std（训练态）；ProprioAdapt 或 <code>--resume</code> 时必走此分支。主循环在 <code>agent.train()</code> 里，直到 <code>max_agent_steps</code>（详见<a href="05-ppo.html">第 05 章</a>与第 20 章）。</p>
+
+<h2 id="gen-grasp">四、gen_grasp.py：零动作无限循环</h2>
+<div class="intuition">
+抓取缓存生成的逻辑极简：让手「维持当前关节目标、不施加策略动作」，物理引擎在重力与接触下自然收敛到稳定抓握；环境内部检测到稳定后把关节角+物体位姿写入 <code>.npy</code>。脚本本身<strong>不训练、不加载网络</strong>，只负责驱动仿真步进。可以把它想成<strong>自动拍照机</strong>：手摆好姿势后，环境负责按快门把状态存盘，脚本只负责「一直让仿真往前走」。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么叫「零动作」？手不是还在动吗？<br>
+  「零动作」指策略输出的<strong>增量为 0</strong>（<code>zero_actions</code> 全 0 张量），不是「手完全静止」。手仍受 PD 控制维持当前目标角，物体在重力下微动；环境认为稳定后就记录一帧抓取状态。
+</div>
+
+<span class="code-cap">gen_grasp.py · 完整 main（精简注释）</span>
+<pre><code class="lang-py">@hydra_task_config(args_cli.task, "agent_cfg_entry_point")
+def main(env_cfg: DirectRLEnvCfg, agent_cfg: dict):
+    shutil.rmtree('outputs/', ignore_errors=True)
+    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg.seed = args_cli.seed if args_cli.seed is not None else agent_cfg['seed']
+    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    agent_cfg["algorithm"]['minibatch_size'] = min([args_cli.num_envs * 8, 32768])
+
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+    env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions)
+
+    env.reset()
+    while True:
+        actions = env.zero_actions()   # shape (num_envs, 21)，全零增量
+        _ = env.step(actions)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">gen_grasp.py main · 逐段白话</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>@hydra_task_config</code> + 精简 CLI 覆盖</td><td>同样用 Hydra 加载 grasp 任务配置；只改 num_envs/seed/device/minibatch（后一项其实用不上）。</td></tr>
+      <tr><td><code>gym.make</code> + Wrapper</td><td>创建<strong>抓取专用</strong>环境类（episode 更短、逻辑偏向写缓存）。</td></tr>
+      <tr><td><code>env.reset()</code></td><td>显式 reset 一次（Wrapper 构造时也会 reset，这里是双保险）。</td></tr>
+      <tr><td><code>while True:</code></td><td>无限循环，直到你 Ctrl+C 或环境内部认为缓存够多。</td></tr>
+      <tr><td><code>zero_actions()</code> + <code>step</code></td><td>每步送全 0 动作；环境推进物理并可能往 <code>cache/*.npy</code> 追加数据。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>对比 train.py，注意<strong>缺失</strong>的部分：</p>
+<ul>
+  <li>无 <code>ConfigWrapper</code>、无 <code>PPO</code> import</li>
+  <li>无 <code>--load_path</code>、<code>--cache</code>、<code>--algorithm</code> 等 train 专用 CLI（文件里未定义）</li>
+  <li>无 checkpoint、无 <code>agent.train()</code></li>
+  <li><code>shutil.rmtree('outputs/', ignore_errors=True)</code> — 忽略 Hydra 临时目录删除失败</li>
+</ul>
+
+<p><code>zero_actions()</code> 在 Wrapper 里返回与动作空间同 shape 的全零张量，表示「本步不改变关节目标增量」：</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py</span>
+<pre><code class="lang-py">def zero_actions(self) -> torch.Tensor:
+    return torch.zeros((self.num_envs, self.num_actions), device=self.device)</code></pre>
+
+<p>典型命令（见<a href="10-pipeline-deploy.html">第 10 章</a>）：</p>
+<pre><code class="lang-py">python rl_isaaclab/scripts/gen_grasp.py \
+  --task Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0 --headless</code></pre>
+<p>任务 ID 带 <code>Grasp</code>，对应 <code>xhand_wave_grasp_env</code> 与更短的 episode（12s），专门服务缓存生成。</p>
+
+<h2 id="play">五、play.py：测试模式可视化</h2>
+<p><code>play.py</code> 与 <code>train.py</code> 共享大量 CLI 覆盖逻辑，但目标是<strong>加载策略、关随机化、无限推理</strong>。</p>
+
+<div class="intuition">
+训练是「考场里随机出题」（域随机化）；play 是「固定同一道题反复演给你看」。所以 play 默认关掉摩擦、质量、PD 等随机项，并固定物体尺寸，这样你看到的转笔效果才稳定、可对比不同 checkpoint。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>play 为什么不调用 <code>agent.train()</code>？<br>
+  因为 play 的目的不是更新网络权重，而是<strong>只看</strong>已训练策略的表现。<code>agent.test()</code> 内部循环：<code>观测 → 网络推理动作 → env.step</code>，不反向传播、不写 checkpoint（除非你自己改代码）。
+</div>
+
+<h3 id="play-domain">5.1 关闭域随机化（默认分支）</h3>
+<span class="code-cap">play.py · else 分支（常规 play）</span>
+<pre><code class="lang-py">else:
+    env_cfg.reset_random_quat = False
+    env_cfg.scale_range = [0.5, 0.5, 1]   # 单尺寸，与旧策略 seed100 等一致
+    env_cfg.randomize_pd_gains = False
+    env_cfg.randomize_friction = False
+    env_cfg.randomize_com = False
+    env_cfg.randomize_mass = False
+    env_cfg.randomize_joint_pos_offset = False
+    env_cfg.sim.gravity = (0, 0, -9.81)
+    env_cfg.gravity_curriculum = False</code></pre>
+<p>训练时开的 PD/摩擦/COM/质量随机化在 play 里<strong>全部关掉</strong>，保证每次可视化条件一致。另有 <code>--diag_sq</code>、<code>--scale8</code> 诊断分支用于复现特定训练设定，日常 play 走 <code>else</code>。</p>
+
+<div class="walk-table">
+  <div class="walktitle">play 关随机化 · 每行在消掉什么随机性</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>reset_random_quat = False</code></td><td>物体初始朝向不再随机转，每次 reset 姿态一致。</td></tr>
+      <tr><td><code>scale_range = [0.5, 0.5, 1]</code></td><td>物体尺寸固定单一档（0.5），不再在 8 档里抽。</td></tr>
+      <tr><td><code>randomize_pd_gains = False</code></td><td>关节 PD 刚度/阻尼用 cfg 名义值，不每次乘随机系数。</td></tr>
+      <tr><td><code>randomize_friction / com / mass = False</code></td><td>摩擦、质心、质量固定，排除「这次滑了只是运气不好」。</td></tr>
+      <tr><td><code>sim.gravity = (0,0,-9.81)</code></td><td>地球重力，与真机一致。</td></tr>
+      <tr><td><code>gravity_curriculum = False</code></td><td>不再慢慢加重力，直接满重力。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="play-test">5.2 ConfigWrapper(test=True) 与 restore_test</h3>
+<span class="code-cap">play.py · 测试路径</span>
+<pre><code class="lang-py">config = ConfigWrapper(agent_cfg, env_cfg, test=True)
+
+env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions)
+agent = eval(agent_cfg["algo"])(env, output_dir=log_dir, full_config=config, create_output_dir=False)
+
+resume_path = agent_cfg["load_path"]
+agent.restore_test(resume_path)
+agent.test()</code></pre>
+
+<p><code>test=True</code> 让 PPO 在初始化时放宽 <code>batch_size % minibatch_size == 0</code> 断言（小 <code>num_envs</code> 也能跑）。<code>create_output_dir=False</code> 不建 TensorBoard 目录。<code>restore_test</code> 只加载 model + input 归一化，<strong>不</strong>加载 value 归一化（推理不需要）。<code>agent.test()</code> 内部 <code>set_eval()</code> 后无限循环 <code>act_inference → step</code>。</p>
+
+<div class="walk-table">
+  <div class="walktitle">play 测试路径 · 与 train 的差异</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>ConfigWrapper(..., test=True)</code></td><td>告诉 PPO「现在是推理模式」，放宽 batch 整除检查。</td></tr>
+      <tr><td><code>create_output_dir=False</code></td><td>不新建 TensorBoard 日志文件夹。</td></tr>
+      <tr><td><code>restore_test(load_path)</code></td><td>只加载推理需要的权重；<code>--load_path</code> 必填。</td></tr>
+      <tr><td><code>agent.test()</code></td><td>无限循环跑策略，开 GUI 时你能看到手转笔。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">ppo.py · restore_train vs restore_test</span>
+<pre><code class="lang-py">def restore_train(self, fn):
+    checkpoint = torch.load(fn)
+    self.model.load_state_dict(checkpoint['model'])
+    self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
+
+def restore_test(self, fn):
+    checkpoint = torch.load(fn)
+    self.model.load_state_dict(checkpoint['model'])
+    if self.normalize_input:
+        self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])</code></pre>
+
+<h2 id="first-run">五点五、第一次跑 train 时心里走一遍</h2>
+<p>假设你在项目根目录执行：</p>
+<pre><code>conda activate env_isaaclab
+cd /media/user/Data/Robotera/era_dexhand_lab
+python rl_isaaclab/scripts/train.py \
+  --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless --num_envs 10</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">第一次训练 · 时间线上发生了什么</div>
+  <table>
+    <thead><tr><th>顺序</th><th>发生的事</th><th>你可能看到的输出/现象</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>argparse 解析 <code>--task</code>、<code>--num_envs 10</code>、<code>--headless</code></td><td>尚无训练日志；可能在编译 shader（首次较慢）</td></tr>
+      <tr><td>2</td><td>AppLauncher 启动 Isaac Sim</td><td>终端 Isaac/Omniverse 相关信息</td></tr>
+      <tr><td>3</td><td>import 任务包 → gym 注册</td><td>无显式打印；若 import 失败会 Traceback</td></tr>
+      <tr><td>4</td><td>Hydra 加载 <code>XhandWaveEnvCfg</code> + <code>ppo_cfg.yaml</code></td><td>可能看到 Hydra 输出目录信息</td></tr>
+      <tr><td>5</td><td>CLI 把 num_envs 改成 10，minibatch 改成 80</td><td><code>[INFO] Logging experiment in directory: .../logs/debug</code></td></tr>
+      <tr><td>6</td><td><code>gym.make</code> 创建 10 个并行仿真</td><td>显存占用上升；headless 无窗口</td></tr>
+      <tr><td>7</td><td><code>PPO(...)</code> 建网络、开 TensorBoard 目录</td><td>打印 experiment 路径</td></tr>
+      <tr><td>8</td><td><code>agent.train()</code> 开始 rollout</td><td>loss/reward 标量逐渐刷在 log 里</td></tr>
+      <tr><td>9</td><td>达到步数或 Ctrl+C</td><td><code>env.close()</code> + <code>simulation_app.close()</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>报错 <code>No such file: cache/xhand_grasp_linspace_...</code> 怎么办？<br>
+  说明还没生成抓取缓存。先跑第 14 章讲的 <code>gen_grasp.py</code>（Grasp 任务 ID），确认 <code>cache/</code> 下有对应 <code>.npy</code>，再 train。详见<a href="18-grasp-cache.html">第 18 章</a>。
+</div>
+
+<h2 id="compare">六、三脚本 15 项对比</h2>
+<div class="symtable">
+  <div class="symtitle">train vs play vs gen_grasp</div>
+  <table>
+    <thead><tr><th>#</th><th>维度</th><th>train.py</th><th>play.py</th><th>gen_grasp.py</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>主要目的</td><td>PPO / ProprioAdapt 训练</td><td>策略可视化评估</td><td>生成抓取缓存</td></tr>
+      <tr><td>2</td><td>默认 <code>--num_envs</code></td><td>16384</td><td><strong>16</strong></td><td>16384</td></tr>
+      <tr><td>3</td><td>典型任务 ID</td><td><code>...-Xhand-Wave-v0</code></td><td>同上</td><td><code>...-Grasp-Xhand-Wave-v0</code></td></tr>
+      <tr><td>4</td><td>实例化 PPO/ProprioAdapt</td><td>是</td><td>是</td><td><strong>否</strong></td></tr>
+      <tr><td>5</td><td><code>ConfigWrapper</code></td><td><code>test=False</code></td><td><code>test=True</code></td><td>无</td></tr>
+      <tr><td>6</td><td>域随机化</td><td>跟随 env cfg 默认开</td><td>默认<strong>全关</strong></td><td>跟随 grasp cfg</td></tr>
+      <tr><td>7</td><td>重力</td><td>课程 -0.05→-9.81；蒸馏强制 -9.81</td><td>固定 -9.81</td><td>跟随 cfg</td></tr>
+      <tr><td>8</td><td>加载 checkpoint</td><td><code>restore_train</code>（条件）</td><td><code>restore_test</code>（必）</td><td>无</td></tr>
+      <tr><td>9</td><td>主循环</td><td><code>agent.train()</code></td><td><code>agent.test()</code></td><td><code>while True: step(zero)</code></td></tr>
+      <tr><td>10</td><td>复制 cfg 快照到 log</td><td>是</td><td>否</td><td>否</td></tr>
+      <tr><td>11</td><td><code>create_output_dir</code></td><td>默认 True</td><td><strong>False</strong></td><td>N/A</td></tr>
+      <tr><td>12</td><td><code>--load_path</code></td><td>可选（ProprioAdapt 必填）</td><td><strong>必填</strong></td><td>无此参数</td></tr>
+      <tr><td>13</td><td><code>--cache</code></td><td>可覆盖 grasp 路径</td><td>可覆盖</td><td>无此参数</td></tr>
+      <tr><td>14</td><td>GUI</td><td>通常 <code>--headless</code></td><td>通常开窗口</td><td>通常 <code>--headless</code></td></tr>
+      <tr><td>15</td><td>产物</td><td><code>logs/.../stage*_nn/*.pth</code></td><td>无文件输出</td><td><code>cache/*.npy</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="callchain">七、train.py 调用链（交互）</h2>
+<div class="viz">
+  <div class="viz-title">从 CLI 到 agent.train()</div>
+  <div class="viz-sub">鼠标悬停每一步，下方 readout 显示该环节的职责。与仓库 <code>viz.js</code> 中 <code>Viz.callChainTrain</code> 逐步对应。</div>
+  <div id="callChain"></div>
+  <div id="callOut" class="readout">把鼠标移到调用链的某一步，这里会显示说明。</div>
+</div>
+
+<h2 id="torch">八、PyTorch 后端与 __main__ 收尾</h2>
+<p>三个脚本在 import torch 后都有相同的性能开关（允许 TF32 加速 matmul，关闭 deterministic）：</p>
+<span class="code-cap">train.py · CUDA 后端</span>
+<pre><code class="lang-py">torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = False</code></pre>
+<p>文件末尾统一模式：</p>
+<span class="code-cap">train.py · 进程退出</span>
+<pre><code class="lang-py">if __name__ == "__main__":
+    main()
+    simulation_app.close()   # 释放 Omniverse，否则进程挂起</code></pre>
+<p><code>gen_grasp.py</code> 的 <code>while True</code> 理论上永不返回，只有 Ctrl+C 或环境内部退出才会走到 <code>simulation_app.close()</code>。训练/ play 正常结束时会关闭 GUI 与 GPU 上下文。</p>
+
+<h2 id="play-diag">九、play.py 诊断分支（进阶）</h2>
+<p>除默认「关随机化」外，play 还提供两个调试 flag，用于复现特定 checkpoint 的训练条件：</p>
+
+<div class="symtable">
+  <div class="symtitle">play.py 三分支</div>
+  <table>
+    <thead><tr><th>分支</th><th>触发</th><th>关键 cfg 覆盖</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>默认</td><td>无 flag</td><td>单 scale 0.5、无 quat、摩擦固定</td><td>日常看策略</td></tr>
+      <tr><td><code>--diag_sq</code></td><td>诊断 scale+quat</td><td><code>reset_random_quat=True</code>、<code>scale_range=[0.4,0.6,8]</code>、重力 -0.05</td><td>查 quat 重置后抓取/甩出</td></tr>
+      <tr><td><code>--scale8</code></td><td>scale 策略验证</td><td>8 尺寸 + 真重力 + 摩擦×<code>friction_mul</code></td><td>扫摩擦鲁棒性</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">play.py · --scale8 摩擦缩放</span>
+<pre><code class="lang-py">env_cfg.randomize_friction = True
+env_cfg.randomize_friction_scale_lower = args_cli.friction_mul
+env_cfg.randomize_friction_scale_upper = args_cli.friction_mul</code></pre>
+<p>使用 <code>--diag_sq</code> 或 <code>--scale8</code> 时，<code>num_envs</code> 需能被 scale 档位数整除（8 尺寸时 env 数 ÷8），否则部分 env 分不到物体尺寸。</p>
+
+<h2 id="errors">九点五、常见报错与对应代码行</h2>
+<div class="walk-table">
+  <div class="walktitle">看到报错时先查哪一段</div>
+  <table>
+    <thead><tr><th>报错关键词</th><th>可能原因</th><th>相关代码/章节</th></tr></thead>
+    <tbody>
+      <tr><td><code>task</code> / <code>gym.error</code></td><td><code>--task</code> 拼写错或未 import 任务包</td><td>第 49 行 import；第 15 章 register</td></tr>
+      <tr><td><code>CUDA out of memory</code></td><td><code>num_envs</code> 太大</td><td>减小 <code>--num_envs</code>；加 <code>--headless</code></td></tr>
+      <tr><td><code>minibatch</code> / <code>batch_size</code></td><td>batch 不能被 minibatch 整除</td><td>第 72 行；play 用 <code>test=True</code></td></tr>
+      <tr><td><code>load_path</code> / <code>FileNotFoundError</code></td><td>蒸馏/play 没传权重路径</td><td>第 69–70、101–105 行</td></tr>
+      <tr><td>进程不退出</td><td>没走到 <code>simulation_app.close()</code></td><td>第 117 行；gen_grasp 需 Ctrl+C</td></tr>
+      <tr><td>Isaac 启动即崩</td><td>驱动/版本问题</td><td>项目 CLAUDE.md：驱动 580</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="wrapper-detail">十、GymStyleEnvWrapper 与 PPO 的衔接</h2>
+<p>Wrapper 在构造时读取 env cfg 并<strong>自动 reset</strong>，因为 PPO 的 <code>train()</code> 假设初始 obs 已就绪：</p>
+<span class="code-cap">sharpa_wave_env_wrapper.py · 构造</span>
+<pre><code class="lang-py">self.prop_hist_len = self.unwrapped.cfg.prop_hist_len
+self.num_actions = gym.spaces.flatdim(self.unwrapped.single_action_space)
+self.num_obs = gym.spaces.flatdim(self.unwrapped.single_observation_space["policy"])
+self._modify_action_space()   # 按 clip_actions 收紧 action_space.low/high
+self.env.reset()</code></pre>
+<p><code>step</code> 返回 dict obs（含 <code>obs</code> 与 <code>priv_info</code>）、reward 向量、done 向量——与<a href="05-ppo.html">第 05 章</a> PPO 的 <code>play_steps</code> 接口一致。gen_grasp 虽不用 PPO，仍用同一 Wrapper，以便 <code>zero_actions</code> 与 <code>clip_actions</code> 行为一致。</p>
+
+<h2 id="commands">十一、常用命令速查</h2>
+<table>
+  <thead><tr><th>阶段</th><th>命令</th></tr></thead>
+  <tbody>
+    <tr><td>抓取缓存</td><td><code>python rl_isaaclab/scripts/gen_grasp.py --task Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0 --headless</code></td></tr>
+    <tr><td>Stage 1 PPO</td><td><code>python rl_isaaclab/scripts/train.py --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless --num_envs 10</code></td></tr>
+    <tr><td>Stage 2 蒸馏</td><td><code>python rl_isaaclab/scripts/train.py --task ... --algorithm ProprioAdapt --load_path logs/.../stage1_nn/last.pth --headless --num_envs 10</code></td></tr>
+    <tr><td>可视化</td><td><code>python rl_isaaclab/scripts/play.py --task ... --num_envs 16 --load_path logs/.../stage1_nn/best.pth</code></td></tr>
+  </tbody>
+</table>
+<p>完整流水线说明见<a href="10-pipeline-deploy.html">第 10 章</a>；PPO 超参与 YAML 映射见<a href="15-config-system.html">第 15 章</a>。</p>
+
+<h2 id="applauncher-args">十二、AppLauncher 常用参数</h2>
+<div class="symtable">
+  <div class="symtitle">Isaac Sim CLI（三脚本共享）</div>
+  <table>
+    <thead><tr><th>参数</th><th>典型值</th><th>效果</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>--headless</code></td><td>训练/gen_grasp 必加</td><td>无窗口，省 GPU 显存</td></tr>
+      <tr><td class="sym-col"><code>--device cuda:0</code></td><td>默认 GPU 0</td><td>写入 <code>env_cfg.sim.device</code></td></tr>
+      <tr><td class="sym-col"><code>--enable_cameras</code></td><td>play 可选</td><td>开相机管线（本任务通常不需要）</td></tr>
+      <tr><td class="sym-col"><code>--experience</code></td><td>Isaac 安装路径</td><td>指定 kit experience 文件</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>RTX 50 系列需驱动 580 + Isaac Sim 5.1；驱动 595 会导致 <code>librtx.scenedb.plugin.so</code> 崩溃（见项目 <code>CLAUDE.md</code>）。</p>
+
+<div class="ask-box">
+  <b>你可能会问：</b>训练一定要加 <code>--headless</code> 吗？<br>
+  不是绝对，但<strong>强烈建议</strong>：GUI 占显存、拖慢仿真。笔记本 12GB 开窗口 + 16384 env 几乎必 OOM；即使用 <code>--num_envs 10</code>，headless 也更稳。play 相反——通常<strong>不要</strong> headless，否则看不到 3D 窗口。
+</div>
+
+<h2 id="finetune">十三、train.py 独有参数</h2>
+<p><code>train.py</code> 比另两个脚本多出的 CLI：</p>
+<ul>
+  <li><code>--cache</code>：覆盖 <code>grasp_cache_path</code>，换一批抓取缓存做实验</li>
+  <li><code>--load_path</code>：checkpoint；ProprioAdapt 必须指向 stage1 的 <code>last.pth</code> 或 <code>best.pth</code></li>
+  <li><code>--finetune_dataset_dir</code>：预留微调数据集目录（部分实验分支使用）</li>
+  <li><code>--resume</code>：PPO 中断续训，走 <code>restore_train</code> 恢复权重与归一化统计</li>
+</ul>
+<p>play 额外有 <code>--diag_sq</code>、<code>--scale8</code>、<code>--friction_mul</code>，train/gen_grasp 没有。</p>
+
+<h2 id="read-order">十四、本章代码阅读顺序建议</h2>
+<ol>
+  <li>先通读 <code>train.py</code> 全文 walk-table（第三节），建立「线以上 / 线以下」印象。</li>
+  <li>对照本地文件打开 <code>rl_isaaclab/scripts/train.py</code>，只看行号，不纠结每句语法。</li>
+  <li>用 <code>grep -n "def main"</code> 对比 play、gen_grasp 的 main 差多少行。</li>
+  <li>读第 15 章 <code>gym.register</code>，理解 <code>--task</code> 字符串从哪登记来。</li>
+  <li>最后再读 PPO 内部（第 20 章）——入口脚本只负责「把饭端到桌上」，不负责「怎么嚼」。</li>
+</ol>
+
+<div class="intuition">
+不要第一次就跳进 <code>ppo.py</code> 里看 loss。把 <code>train.py</code> 当成<strong>地铁线路图</strong>：知道每一站（AppLauncher、Hydra、gym.make、PPO）即可；站点内部装修（网络结构）后面章节再拆。
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">三脚本文件头 · 相同与不同（一眼对比）</div>
+  <table>
+    <thead><tr><th>片段</th><th>train</th><th>play</th><th>gen_grasp</th></tr></thead>
+    <tbody>
+      <tr><td>AppLauncher 块（约 1–33 行）</td><td>相同结构</td><td>相同</td><td>相同</td></tr>
+      <tr><td>import PPO/ProprioAdapt</td><td>有</td><td>有</td><td><strong>无</strong></td></tr>
+      <tr><td>ConfigWrapper</td><td>有</td><td>有（test=True）</td><td><strong>无</strong></td></tr>
+      <tr><td>关随机化分支</td><td>无（跟 cfg）</td><td>有 else 分支</td><td>无</td></tr>
+      <tr><td>主循环</td><td><code>agent.train()</code></td><td><code>agent.test()</code></td><td><code>while True</code></td></tr>
+      <tr><td><code>simulation_app.close()</code></td><td>有</td><td>有</td><td>有（若循环退出）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？（只读检查，无需 Isaac Sim）</summary>
+  <div class="tryit-body">
+    <p>在 <code>era_dexhand_lab</code> 根目录对比三脚本行数与 import 差异：</p>
+    <pre><code>wc -l rl_isaaclab/scripts/train.py rl_isaaclab/scripts/play.py rl_isaaclab/scripts/gen_grasp.py
+grep -n "def main" rl_isaaclab/scripts/*.py
+grep -n "agent\." rl_isaaclab/scripts/train.py rl_isaaclab/scripts/play.py rl_isaaclab/scripts/gen_grasp.py</code></pre>
+    <p>应看到只有 train/play 出现 <code>agent.train</code> / <code>agent.test</code>，gen_grasp 只有 <code>env.step</code>。</p>
+  </div>
+</details>
+
+<h2 id="restore-detail">十四点五、checkpoint 加载再讲一遍</h2>
+<span class="code-cap">ppo.py · restore_train vs restore_test（完整）</span>
+<pre><code class="lang-py">def restore_train(self, fn):
+    checkpoint = torch.load(fn)
+    self.model.load_state_dict(checkpoint['model'])
+    self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
+
+def restore_test(self, fn):
+    checkpoint = torch.load(fn)
+    self.model.load_state_dict(checkpoint['model'])
+    if self.normalize_input:
+        self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">checkpoint 里有什么 · 为什么 play 可以少加载</div>
+  <table>
+    <thead><tr><th>键</th><th>训练要不要</th><th>推理要不要</th><th>白话</th></tr></thead>
+    <tbody>
+      <tr><td><code>model</code></td><td>要</td><td>要</td><td>神经网络权重，策略「大脑」。</td></tr>
+      <tr><td><code>running_mean_std</code></td><td>要（训练态）</td><td>输入归一化要；value 部分推理不用</td><td>观测归一化的滑动平均；推理时要用同一套缩放。</td></tr>
+      <tr><td>优化器状态（若有）</td><td>续训可能要</td><td>不要</td><td><code>restore_test</code> 根本不碰优化器。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>--resume</code> 和 <code>--load_path</code> 有什么区别？<br>
+  <code>--load_path</code> 只指定<strong>文件路径</strong>；<code>--resume</code> 是<strong>开关</strong>，告诉 train.py 在 PPO 阶段也要 <code>restore_train</code>。ProprioAdapt 即使用户不写 <code>--resume</code>，只要 <code>algo</code> 是 ProprioAdapt 也会强制加载 stage1。
+</div>
+
+<div class="intuition">
+<code>.pth</code> 像游戏存档：<code>restore_train</code> 是「读档继续练级」；<code>restore_test</code> 是「只读人物外观和装备进观战模式」，不需要经验条和背包里训练专用的东西。
+</div>
+
+<p class="muted">小结：<code>train.py</code> 第 101–105 行决定是否读档；第 108 行才开始真正「练级」。</p>
+
+<div class="ask-box">
+  <b>你可能会问：</b>我能用编辑器「跳转定义」跟代码吗？<br>
+  可以。在 VS Code/Cursor 里对 <code>PPO</code>、<code>hydra_task_config</code> 按 F12；<code>train.py</code> 本身只有 118 行，适合分屏：左边 HTML walk-table，右边源文件对照行号。行号以仓库当前版本为准，若你本地文件有增删，以 <code>wc -l</code> 为准。
+</div>
+
+<h2 id="glossary-recap">十五、本章术语回顾</h2>
+<div class="glossary">
+  <h4>读完第 14 章应能口头解释</h4>
+  <dl>
+    <dt>为什么 import 分两段？</dt>
+    <dd>Isaac Sim 要求先 AppLauncher，再 import 仿真库；否则崩溃。</dd>
+    <dt><code>parse_known_args</code> 解决什么？</dt>
+    <dd>argparse 与 Hydra 各拿各的命令行参数，不互相抢。</dd>
+    <dt>train 与 play 最大区别？</dt>
+    <dd>train 更新权重；play 加载权重、关随机化、只推理。</dd>
+    <dt>gen_grasp 为什么无限循环？</dt>
+    <dd>持续步进仿真，让环境有机会把稳定抓握写入 cache。</dd>
+    <dt><code>restore_train</code> vs <code>restore_test</code>？</dt>
+    <dd>前者续训用（含 value 归一化）；后者推理用（更轻）。</dd>
+    <dt>下一章读什么？</dt>
+    <dd>第 15 章：<code>gym.register</code> 与 <code>xhand_wave_env_cfg.py</code> 每个字段的含义。</dd>
+  </dl>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> 三入口共享 AppLauncher + Hydra + gym.make + Wrapper；train 走 <code>restore_train → train()</code>，play 关随机化走 <code>restore_test → test()</code>，gen_grasp 只 <code>zero_actions</code> 步进。下一章拆解配置从 <code>gym.register</code> 到 <code>ppo_cfg.yaml</code> 如何汇入 PPO。</div>
+
+<div class="pager">
+  <a href="13-project-map.html"><div class="dir">← 上一章</div><div class="ttl">13 · 项目地图与 Python 补课</div></a>
+  <a class="next" href="15-config-system.html"><div class="dir">下一章 →</div><div class="ttl">15 · 配置系统</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 14 章 · 入口脚本</footer>
+
+<script>
+Viz.callChainTrain('callChain', 'callOut');
+</script>
+</body>
+</html>

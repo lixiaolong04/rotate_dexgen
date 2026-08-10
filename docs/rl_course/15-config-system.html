@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>15 · 配置系统</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 15 章 · 代码导读</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 15 · Part B 配置</div>
+  <h1>配置系统：从 gym.register 到 PPO</h1>
+  <p class="sub">读完本章，你能回答：<code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code> 注册时传了哪三个 kwargs？<code>action_space=21</code> 和 <code>actuated_joint_names</code> 如何对应？<code>ppo_cfg.yaml</code> 里每个键在 PPO 代码哪一行被读？CLI 和 YAML 谁覆盖谁？</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>前置阅读。</b> 入口脚本如何把配置用起来见<a href="14-entry-scripts.html">第 14 章</a>。环境一步里这些字段如何消费见<a href="16-env-lifecycle.html">第 16 章</a>（下一章）。奖励项含义见<a href="02-env-reward.html">第 02 章</a>；PPO 公式见<a href="05-ppo.html">第 05 章</a>。</div>
+
+<h2 id="zero">零、读代码之前</h2>
+<p>配置听起来抽象，其实就是<strong>可调旋钮的清单</strong>：仿真多快、奖励多重、网络多大……本章教你这些旋钮写在哪些文件、谁覆盖谁、拧错会怎样。</p>
+
+<div class="glossary">
+  <h4>本章术语速查</h4>
+  <dl>
+    <dt>gym.register</dt>
+    <dd>向 Gymnasium「登记」一个任务：名字、环境类在哪、默认配置从哪读。类似给 App 在应用商店上架。</dd>
+    <dt>entry_point</dt>
+    <dd>字符串路径，告诉 Python 去哪个模块找<strong>环境类</strong>或<strong>配置文件</strong>，格式常是 <code>包.模块:类名</code>。</dd>
+    <dt>kwargs</dt>
+    <dd>「keyword arguments」关键字参数；在 <code>gym.register(..., kwargs={...})</code> 里是随任务附带的额外信息（配置入口等）。</dd>
+    <dt>@configclass</dt>
+    <dd>IsaacLab 装饰器，把类变成带默认值的配置 dataclass；字段可嵌套 <code>SimulationCfg</code> 等子配置。</dd>
+    <dt>YAML</dt>
+    <dd>人类可读的层级配置文件，扩展名 <code>.yaml</code>；本项目 PPO 超参在 <code>ppo_cfg.yaml</code>。</dd>
+    <dt>Hydra 覆盖</dt>
+    <dd>命令行形如 <code>env.scene.num_envs=10</code> 的写法，运行时改 cfg 字段，不必改磁盘上的 py 文件。</dd>
+    <dt>ConfigWrapper</dt>
+    <dd>小盒子：<code>.train</code> 装算法 dict，<code>.task</code> 装环境 dataclass，交给 PPO 和部署代码。</dd>
+    <dt>域随机化（domain randomization）</dt>
+    <dd>训练时随机改摩擦、质量、PD 等，让策略更鲁棒；play 时通常关掉以便可视化稳定。</dd>
+  </dl>
+</div>
+
+<div class="intuition">
+配置像<strong>游戏设置菜单</strong>：<code>xhand_wave_env_cfg.py</code> 是「画面/物理/难度」；<code>ppo_cfg.yaml</code> 是「AI 学习率/训练回合数」；命令行是「开始游戏前临时改的难度」。菜单默认值在文件里，你每次启动仍可覆盖。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>我该改 py 还是改 yaml 还是只改命令行？<br>
+  <strong>只改并行数</strong> → 命令行 <code>--num_envs</code> 就够。<strong>改奖励/仿真</strong> → 改 <code>xhand_wave_env_cfg.py</code> 并重新训练。<strong>改 PPO 学习率、网络宽度</strong> → 改 <code>ppo_cfg.yaml</code>。改网络宽度后旧 <code>.pth</code> 往往不能续训（shape 对不上）。
+</div>
+
+<h2 id="overview">一、配置从哪来、到哪去</h2>
+<div class="intuition">
+可以把配置想成三层「默认值」叠在一起：<strong>最底层</strong>是 Python 文件 <code>xhand_wave_env_cfg.py</code> 和 YAML <code>ppo_cfg.yaml</code> 里写死的默认；<strong>中间层</strong>是 Hydra 在 <code>@hydra_task_config</code> 里按 gym 注册信息加载并实例化；<strong>最顶层</strong>是你在命令行写的 <code>--num_envs 10</code> 等覆盖。最终合并结果分别喂给 <code>gym.make(cfg=env_cfg)</code> 和 <code>PPO(..., full_config=ConfigWrapper(...))</code>。
+</div>
+
+<div class="viz">
+  <div class="viz-title">配置优先级栈（可悬停）</div>
+  <div class="viz-sub">越靠上的层优先级越高。CLI 覆盖 Hydra 运行时；Hydra 覆盖 yaml/py 默认值。</div>
+  <div id="cfgStack"></div>
+  <div id="cfgOut" class="readout">把鼠标移到某一层，这里会显示该层如何覆盖下层。</div>
+</div>
+
+<h2 id="register">二、gym.register 与三个 kwargs</h2>
+<p>任务 ID 不是魔法字符串——它在 <code>tasks/inhand_rotate/__init__.py</code> 里注册。训练脚本 <code>import rl_isaaclab.tasks.inhand_rotate</code> 时执行下列代码：</p>
+
+<div class="intuition">
+<code>gym.register</code> 像给任务办<strong>身份证</strong>：<code>id</code> 是姓名（命令行 <code>--task</code> 用的）；<code>entry_point</code> 是「人住在哪」（环境类文件）；<code>kwargs</code> 是「档案里还挂了哪两份说明书」（env cfg + agent yaml）。
+</div>
+
+<span class="code-cap">tasks/inhand_rotate/__init__.py · Xhand 训练任务</span>
+<pre><code class="lang-py">gym.register(
+    id="Isaac-Inhand-Rotate-Xhand-Wave-v0",
+    entry_point=f"rl_isaaclab.tasks.inhand_rotate.xhand_wave_env:XhandWaveInhandRotateEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.xhand_wave_env_cfg:XhandWaveEnvCfg",
+        "agent_cfg_entry_point": f"{agents.__name__}:ppo_cfg.yaml",
+    },
+)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">gym.register · 零基础逐项讲解（像填表一样）</div>
+  <table>
+    <thead><tr><th>参数名</th><th>本项目的值</th><th>白话解释 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td><code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td><td>任务对外名字。<strong>改：</strong>命令行 <code>--task</code> 也要改；旧文档/脚本里的名字会对不上。</td></tr>
+      <tr><td><code>entry_point</code></td><td><code>...xhand_wave_env:XhandWaveInhandRotateEnv</code></td><td>「模块路径:类名」→ <code>gym.make</code> 时实例化这个环境类。<strong>改：</strong>指错类会 import 失败或跑到错误仿真逻辑。</td></tr>
+      <tr><td><code>disable_env_checker</code></td><td><code>True</code></td><td>关掉 Gymnasium 对观测/动作空间的严格自检（大规模 vec env 常过不了）。<strong>改 False：</strong>可能启动时报 warning 或直接不让注册。</td></tr>
+      <tr><td><code>kwargs["env_cfg_entry_point"]</code></td><td><code>...xhand_wave_env_cfg:XhandWaveEnvCfg</code></td><td>Hydra 用来<strong>实例化</strong>环境配置 dataclass 的地址。<strong>改：</strong>会加载另一套仿真参数（如 grasp cfg）。</td></tr>
+      <tr><td><code>kwargs["agent_cfg_entry_point"]</code></td><td><code>...agents:ppo_cfg.yaml</code></td><td>Hydra 用来<strong>读取</strong> PPO yaml 的路径。<strong>改：</strong>学习率、网络结构等全变；需与算法代码兼容。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么说「三个 kwargs」？表里不是五个参数吗？<br>
+  口语里的「三个」常指：<code>entry_point</code>（环境类指针）+ <code>env_cfg_entry_point</code> + <code>agent_cfg_entry_point</code>。再加上 <code>disable_env_checker</code> 就是注册表上所有「额外选项」。本课程表格五列全列，避免数错。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>f"{__name__}.xhand_wave_env_cfg:..."</code> 里 <code>__name__</code> 是什么？<br>
+  当前模块名，这里是 <code>rl_isaaclab.tasks.inhand_rotate</code>。拼出来等于「从 inhand_rotate 包里的 xhand_wave_env_cfg 模块取 XhandWaveEnvCfg 类」，这样移动包时路径自动对。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">gym.register 字段说明</div>
+  <table>
+    <thead><tr><th>字段</th><th>值（Xhand 训练）</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>id</code></td><td><code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td><td><code>--task</code> 参数；<code>gym.make</code> 查表键</td></tr>
+      <tr><td class="sym-col"><code>entry_point</code></td><td><code>xhand_wave_env:XhandWaveInhandRotateEnv</code></td><td>环境<strong>类</strong>的 import 路径</td></tr>
+      <tr><td class="sym-col"><code>disable_env_checker</code></td><td><code>True</code></td><td>跳过 Gymnasium 对超大 vec env 的检查</td></tr>
+      <tr><td class="sym-col"><code>kwargs["env_cfg_entry_point"]</code></td><td><code>...xhand_wave_env_cfg:XhandWaveEnvCfg</code></td><td>Hydra 实例化环境配置的 dataclass</td></tr>
+      <tr><td class="sym-col"><code>kwargs["agent_cfg_entry_point"]</code></td><td><code>...agents:ppo_cfg.yaml</code></td><td>Hydra 加载算法 YAML → dict</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>用户说的「三个 kwargs」通常指注册表里除 <code>id</code>/<code>entry_point</code> 外、Hydra 真正消费的两个 entry point，加上 <code>disable_env_checker=True</code> 这一注册选项；有时也把 <code>entry_point</code> 本身算作「指向环境的第三指针」。本课程表格按上表五列完整列出，避免遗漏。</p>
+
+<p>同文件还注册了 SharpaWave 与 Grasp 变体：</p>
+<table>
+  <thead><tr><th>任务 ID 后缀</th><th>环境类</th><th>cfg 文件</th></tr></thead>
+  <tbody>
+    <tr><td><code>...-Xhand-Wave-v0</code></td><td><code>XhandWaveInhandRotateEnv</code></td><td><code>xhand_wave_env_cfg.py</code></td></tr>
+    <tr><td><code>...-Grasp-Xhand-Wave-v0</code></td><td><code>XhandWaveInhandRotateGraspEnv</code></td><td><code>xhand_wave_grasp_env_cfg.py</code></td></tr>
+    <tr><td><code>...-Sharpa-Wave-v0</code></td><td><code>SharpaWaveInhandRotateEnv</code></td><td><code>sharpa_wave_env_cfg.py</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="env-cfg">三、xhand_wave_env_cfg.py 分段导读</h2>
+<p><code>XhandWaveEnvCfg</code> 继承 IsaacLab 的 <code>DirectRLEnvCfg</code>，用 <code>@configclass</code> 装饰。下面按功能块解读与训练直接相关的字段（文件约 338 行）。每个字段尽量回答两件事：<strong>它管什么</strong>、<strong>改错了会怎样</strong>。</p>
+
+<div class="ask-box">
+  <b>你可能会问：</b>为什么要在一个 py 文件里写几十行默认值，不全放 yaml？<br>
+  环境 cfg 强依赖 IsaacLab 类型（<code>SimulationCfg</code>、<code>ArticulationCfg</code>…），IDE 能补全、嵌套结构清晰；PPO 超参是纯数值，放 yaml 更方便扫一眼改学习率。这是 IsaacLab 生态的常见分工。
+</div>
+
+<h3 id="env-dim">3.1 维度与控制频率</h3>
+<span class="code-cap">xhand_wave_env_cfg.py · 环境与控制</span>
+<pre><code class="lang-py">@configclass
+class XhandWaveEnvCfg(DirectRLEnvCfg):
+    episode_length_s = 20.0
+    action_space = 21
+    observation_space = 186  # (21 joint_pos + 21 targets + 5 contact + 15 contact_pos) * 3 frames
+    prop_hist_len = 30
+    priv_info_dim = 8
+    decimation = 12
+    clip_obs = 5.0
+    clip_actions = 1.0
+    action_scale = 1 / 24
+    torque_control = True</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">3.1 字段逐条 · 改了会怎样</div>
+  <table>
+    <thead><tr><th>字段</th><th>默认值</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>episode_length_s</code></td><td>20.0</td><td>一局最长秒数。<strong>改大：</strong>每局更久，样本相关性强；<strong>改小：</strong>更频繁 reset，抓取缓存消耗快。</td></tr>
+      <tr><td><code>action_space</code></td><td>21</td><td>策略输出维度，必须等于 <code>len(actuated_joint_names)</code>。<strong>改而不改关节列表：</strong>测试失败 / 运行时 shape 错误。</td></tr>
+      <tr><td><code>observation_space</code></td><td>186</td><td>策略观测总维数，必须与 <code>_get_observations</code> 实际拼接一致。<strong>改错：</strong>PPO 网络输入维对不上。</td></tr>
+      <tr><td><code>prop_hist_len</code></td><td>30</td><td>给 TConv 网络的历史帧数（与上面 3 帧堆叠不同）。<strong>改：</strong>需同步改网络与部署 obs 构造。</td></tr>
+      <tr><td><code>priv_info_dim</code></td><td>8</td><td>特权信息维数（仿真里才有、真机没有的量）。<strong>改：</strong>须与 yaml <code>priv_info_dim</code> 一致。</td></tr>
+      <tr><td><code>decimation</code></td><td>12</td><td>每 12 个物理步才执行一次 RL 动作 → 20Hz 控制。<strong>改大：</strong>控制变慢；<strong>改小：</strong>更细但更耗算力。</td></tr>
+      <tr><td><code>clip_obs / clip_actions</code></td><td>5.0 / 1.0</td><td>观测/动作裁剪范围，防数值爆炸。<strong>改太小：</strong>信息被截断，策略变钝。</td></tr>
+      <tr><td><code>action_scale</code></td><td>1/24</td><td>网络输出 × 该系数才变成关节增量。<strong>改大：</strong>手抖、易掉物；<strong>改小：</strong>动作迟缓难转笔。</td></tr>
+      <tr><td><code>torque_control</code></td><td>True</td><td>True=力矩模式；False=位置模式。<strong>改：</strong>与真机执行器模型不一致会 sim2real 变差。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">维度公式（186 维观测）</div>
+  <table>
+    <thead><tr><th>块</th><th>维数</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">joint_pos</td><td>21</td><td>当前关节角（策略序）</td></tr>
+      <tr><td class="sym-col">targets</td><td>21</td><td>上一步动作映射后的目标角</td></tr>
+      <tr><td class="sym-col">contact</td><td>5</td><td>五指指尖触觉标量</td></tr>
+      <tr><td class="sym-col">contact_pos</td><td>15</td><td>接触位置（cfg 中 <code>enable_contact_pos=False</code> 时可能为零填充）</td></tr>
+      <tr><td class="sym-col">× 3 frames</td><td>×3</td><td>历史堆叠（非 TConv 输入；TConv 另用 30 帧）</td></tr>
+      <tr><td><strong>合计</strong></td><td><strong>186</strong></td><td>(21+21+5+15)×3</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><code>decimation = 12</code>：仿真步长 <code>dt = 1/240</code> s，每 12 个物理步才执行一次 RL 动作，故控制频率为 240/12 = <strong>20 Hz</strong>，与真机部署一致。</p>
+
+<div class="intuition">
+<code>decimation</code> 像游戏里的「每 N 帧才读一次手柄」：物理引擎仍 240 FPS 细算碰撞，但 AI 只 20 次/秒做决定，和真实 Xhand 控制频率对齐。
+</div>
+
+<h3 id="env-scene">3.2 scene：并行环境与间距</h3>
+<span class="code-cap">xhand_wave_env_cfg.py · scene + sim</span>
+<pre><code class="lang-py">sim: SimulationCfg = SimulationCfg(
+    dt=1 / 240,
+    render_interval=2,
+    gravity=(0.0, 0.0, -0.05),   # 训练起步近失重，配合 gravity_curriculum
+    physx=PhysxCfg(...),
+)
+scene: InteractiveSceneCfg = InteractiveSceneCfg(
+    num_envs=16384, env_spacing=0.75, replicate_physics=False
+)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">3.2 sim + scene · 改了会怎样</div>
+  <table>
+    <thead><tr><th>字段</th><th>默认值</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>sim.dt</code></td><td>1/240</td><td>物理仿真时间步。<strong>改：</strong>与 <code>decimation</code> 联动改变控制频率；一般勿乱改。</td></tr>
+      <tr><td><code>sim.gravity</code></td><td>(0,0,-0.05)</td><td>训练起步近失重，配合 <code>gravity_curriculum</code>。<strong>改成立即 -9.81：</strong>早期难抓、掉落多；蒸馏时 train.py 会强制改回。</td></tr>
+      <tr><td><code>scene.num_envs</code></td><td>16384</td><td>并行环境数。<strong>改大：</strong>样本多但吃显存；<strong>笔记本：</strong>用 CLI 改 10。</td></tr>
+      <tr><td><code>scene.env_spacing</code></td><td>0.75</td><td>每个 env 在场景里间隔（米）。<strong>改太小：</strong>相邻手的物体/碰撞体可能互相干扰。</td></tr>
+      <tr><td><code>replicate_physics</code></td><td>False</td><td>物理是否跨 env 复制优化。<strong>改：</strong>一般保持默认，除非你做 IsaacLab 性能调优。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><code>scene.num_envs</code> 是 YAML/CLI 最常改的参数：默认 16384 面向数据中心 GPU；笔记本 12GB 显存用 <code>--num_envs 10</code> 覆盖。 <code>env_spacing</code> 防止并行实例碰撞体重叠。</p>
+
+<h3 id="env-robot">3.3 robot_cfg 与 actuated_joint_names</h3>
+<p><code>robot_cfg</code> 指定 USD 路径、初始关节角、PD 执行器。<code>actuated_joint_names</code> 列出<strong>策略控制的 21 个 revolute 关节</strong>，顺序即动作向量下标：</p>
+
+<span class="code-cap">xhand_wave_env_cfg.py · actuated_joint_names（21 个）</span>
+<pre><code class="lang-py">actuated_joint_names = [
+    "right_hand_thumb_mcp0_joint",
+    "right_hand_thumb_mcp1_joint",
+    "right_hand_thumb_pip_joint",
+    "right_hand_thumb_dip_joint",
+    "right_hand_index_mcp0_joint",
+    "right_hand_index_mcp1_joint",
+    "right_hand_index_pip_joint",
+    "right_hand_index_dip_joint",
+    "right_hand_mid_mcp0_joint",
+    "right_hand_mid_mcp1_joint",
+    "right_hand_mid_pip_joint",
+    "right_hand_mid_dip_joint",
+    "right_hand_ring_mcp0_joint",
+    "right_hand_ring_mcp1_joint",
+    "right_hand_ring_pip_joint",
+    "right_hand_ring_dip_joint",
+    "right_hand_ltspalm_joint",
+    "right_hand_pinky_mcp0_joint",
+    "right_hand_pinky_mcp1_joint",
+    "right_hand_pinky_pip_joint",
+    "right_hand_pinky_dip_joint",
+]</code></pre>
+
+<p>拇指 4 + 食/中/无名/小指各 4 + 小指掌 <code>ltspalm</code> 1 = 21 DOF。URDF 里所有 revolute 关节必须与此列表<strong>一一对应</strong>（见本章末尾 tryit 测试）。</p>
+
+<div class="walk-table">
+  <div class="walktitle">3.3 robot 相关 · 改了会怎样</div>
+  <table>
+    <thead><tr><th>字段</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>hand_init_pose</code></td><td>手在场景里的初始位置+四元数朝向。<strong>改：</strong>与 grasp 缓存生成时不一致会导致 reset 姿态离谱、抓不稳。</td></tr>
+      <tr><td><code>robot_cfg.spawn.usd_path</code></td><td>Xhand 3D 模型路径。<strong>改错路径：</strong>仿真里手加载失败或变成方块。</td></tr>
+      <tr><td><code>init_state.joint_pos</code></td><td>各关节初始角（字典：关节名→弧度）。<strong>漏关节：</strong>测试 <code>test_init_joint_pos_covers_all_21</code> 失败。</td></tr>
+      <tr><td><code>actuators stiffness/damping</code></td><td>PD 执行器刚度/阻尼名义值。<strong>改：</strong>手变硬/变软；域随机化会在此基础上乘系数。</td></tr>
+      <tr><td><code>actuated_joint_names</code></td><td>动作向量每一维对应的关节，<strong>顺序就是下标</strong>。<strong>改顺序：</strong>策略会动错手指，灾难性。</td></tr>
+      <tr><td><code>fingertip_body_names</code></td><td>五个指尖 link 名，用于触觉/奖励。<strong>与传感器 prim 不一致：</strong>触觉读数为 0。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>动作第 0 维到底是哪个关节？<br>
+  看 <code>actuated_joint_names[0]</code>，当前是 <code>right_hand_thumb_mcp0_joint</code>（拇指）。网络输出向量的下标与列表下标<strong>严格对应</strong>，部署真机时也必须同一顺序（见 deploy 章节）。
+</div>
+
+<h3 id="env-rewards">3.4 奖励系数</h3>
+<span class="code-cap">xhand_wave_env_cfg.py · rewards</span>
+<pre><code class="lang-py">rot_axis = (0, 0, 1)
+angvel_clip_min = -0.5
+angvel_clip_max = 0.5
+rotate_reward_scale = 2.5
+object_linvel_penalty_scale = -0.3
+pos_diff_penalty_scale = -0.4
+torque_penalty_scale = -0.1
+work_penalty_scale = -0.5
+object_pos_reward_scale = 0.003</code></pre>
+<p>正奖励鼓励绕 Z 轴角速度（转笔）；负项惩罚线速度、位置漂移、力矩与做功。具体计算公式在 <code>xhand_wave_env.py</code> 的 <code>_get_rewards</code>（第 17 章展开）。</p>
+
+<div class="walk-table">
+  <div class="walktitle">3.4 奖励系数 · 改了会怎样（调参直觉）</div>
+  <table>
+    <thead><tr><th>字段</th><th>默认</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>rot_axis</code></td><td>(0,0,1)</td><td>鼓励绕哪根轴转笔（Z 竖轴）。<strong>改：</strong>策略会绕别的轴蹭动。</td></tr>
+      <tr><td><code>angvel_clip_min/max</code></td><td>-0.5 / 0.5</td><td>角速度奖励裁剪，防异常尖峰。<strong>改宽：</strong>偶发大力矩可能拿高分。</td></tr>
+      <tr><td><code>rotate_reward_scale</code></td><td>2.5</td><td>转笔正奖励权重。<strong>改大：</strong>更激进旋转，易甩飞；<strong>改小：</strong>不愿转。</td></tr>
+      <tr><td><code>object_linvel_penalty_scale</code></td><td>-0.3</td><td>惩罚物体线速度（别乱扔）。<strong>绝对值改大：</strong>更稳但转速可能下降。</td></tr>
+      <tr><td><code>pos_diff_penalty_scale</code></td><td>-0.4</td><td>惩罚物体偏离掌心。<strong>改大：</strong>更要求物体待在手里。</td></tr>
+      <tr><td><code>torque_penalty_scale</code></td><td>-0.1</td><td>惩罚大力矩，省能、护硬件。<strong>改大：</strong>动作更「软」。</td></tr>
+      <tr><td><code>work_penalty_scale</code></td><td>-0.5</td><td>惩罚做功（力×位移）。<strong>改大：</strong>更少无效蹭动。</td></tr>
+      <tr><td><code>object_pos_reward_scale</code></td><td>0.003</td><td>小正项稳住物体位置。<strong>改大：</strong>可能牺牲转速换稳定。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+奖励像<strong>绩效考核表</strong>：转得快加分，扔出去扣分，费电扣分。scale 是每项的「权重分」；改表之后要重新训练，旧策略是按旧表优化的。
+</div>
+
+<h3 id="env-grasp">3.5 grasp_cache_path 与随机化</h3>
+<span class="code-cap">xhand_wave_env_cfg.py · 缓存与域随机</span>
+<pre><code class="lang-py">grasp_cache_path = 'cache/xhand_grasp_linspace'
+
+scale_range = [0.4, 0.6, 8]
+events.rand_params(scale_range)
+randomize_pd_gains = True
+randomize_friction = True
+randomize_com = True
+randomize_mass = True
+gravity_curriculum = True</code></pre>
+<p><code>grasp_cache_path</code> 是<strong>前缀</strong>：环境按 <code>scale_range</code> 拼出如 <code>cache/xhand_grasp_linspace_0.4-0.6-8.npy</code>。训练前必须先跑 <code>gen_grasp.py</code> 生成对应文件（<a href="14-entry-scripts.html">第 14 章</a>）。<code>scale_range</code> 必须与 grasp cfg 一致，否则 reset 读不到缓存。</p>
+
+<div class="walk-table">
+  <div class="walktitle">3.5 缓存 + 随机化 · 改了会怎样</div>
+  <table>
+    <thead><tr><th>字段</th><th>默认</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>grasp_cache_path</code></td><td><code>cache/xhand_grasp_linspace</code></td><td>抓取 npy 文件名前缀。<strong>改而无对应文件：</strong>reset 报错或手张开摔物。</td></tr>
+      <tr><td><code>scale_range</code></td><td>[0.4,0.6,8]</td><td>物体尺寸随机：最小、最大、档位数。<strong>与 grasp 缓存后缀不一致：</strong>找不到 npy。</td></tr>
+      <tr><td><code>randomize_pd_gains</code></td><td>True</td><td>每 reset 随机缩放 PD。<strong>改 False：</strong>仿真更「干净」，sim2real 鲁棒性可能下降。</td></tr>
+      <tr><td><code>randomize_friction</code></td><td>True</td><td>随机摩擦。<strong>改 False：</strong>训练分布变窄，真机滑/涩可能不适应。</td></tr>
+      <tr><td><code>randomize_com / mass</code></td><td>True</td><td>随机质心、质量。<strong>改 False：</strong>物体动力学更固定。</td></tr>
+      <tr><td><code>gravity_curriculum</code></td><td>True</td><td>掉落少则逐渐加大重力。<strong>改 False：</strong>一直用 <code>sim.gravity</code> 初值（近失重），真机落差大。</td></tr>
+      <tr><td><code>force_scale</code> 等</td><td>2 / 0.25 …</td><td>随机推物体扰动。<strong>改大：</strong>更难抓，策略更鲁棒或学不会。</td></tr>
+      <tr><td><code>dof_limits_scale</code></td><td>0.9</td><td>关节限位缩到 URDF 的 90%。<strong>改：</strong>与真机可动范围对齐用；太大可能撞限位。</td></tr>
+      <tr><td><code>joint_noise_scale</code></td><td>0.02</td><td>关节读数噪声。<strong>改大：</strong>观测更脏，逼策略不依赖完美反馈。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>我只改了 <code>scale_range</code>，还要做什么？<br>
+  必须：① 用<strong>相同</strong> <code>scale_range</code> 改 grasp env cfg；② 重新跑 <code>gen_grasp.py</code> 生成新后缀的 npy；③ 再训练。少一步就会在 reset 时 FileNotFound 或抓到错误尺寸物体。
+</div>
+
+<h3 id="env-event">3.5b EventCfg 与 scale 随机化</h3>
+<span class="code-cap">xhand_wave_env_cfg.py · EventCfg</span>
+<pre><code class="lang-py">@configclass
+class EventCfg:
+    def rand_params(self, scale_range: list[float, float, int]):
+        self.randomize_scale = EventTermCfg(
+            func=randomize_rigid_body_scale,
+            mode="prestartup",
+            params={"scale_range": scale_range, "asset_cfg": SceneEntityCfg("object")},
+        )
+
+# 类末尾调用：
+events: EventCfg = EventCfg()
+events.rand_params(scale_range)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">EventCfg · 改了会怎样</div>
+  <table>
+    <thead><tr><th>部分</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>mode="prestartup"</code></td><td>在仿真 startup 前改物体 scale；<strong>改时机</strong>可能导致 reset 与视觉不一致。</td></tr>
+      <tr><td><code>randomize_rigid_body_scale</code></td><td>在 <code>scale_range</code> 里抽圆柱半径；与 grasp npy 后缀强绑定。</td></tr>
+      <tr><td>忘记 <code>events.rand_params(...)</code></td><td>物体可能始终默认尺寸，<code>scale_range</code> 字段形同虚设。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="env-contact-object">3.6 触觉、物体与 reset（cfg 后半段）</h3>
+<span class="code-cap">xhand_wave_env_cfg.py · 触觉与 reset 字段摘要</span>
+<pre><code class="lang-py">enable_tactile = True
+binary_contact = False
+contact_latency = 0.005
+reset_height_lower / reset_height_upper = ...
+reset_random_quat = False
+object_cfg: RigidObjectCfg = ...  # cylinder.usd, mass=0.05</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">3.6 触觉 / 物体 / reset · 改了会怎样</div>
+  <table>
+    <thead><tr><th>字段</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>enable_tactile</code></td><td><strong>False：</strong>观测里触觉变 0，策略「摸盲」；真机有触觉时 sim2real 变差。</td></tr>
+      <tr><td><code>binary_contact</code></td><td><strong>True：</strong>力变成 0/1，更离散；与真机 ADC 特性有关时可能更贴真。</td></tr>
+      <tr><td><code>contact_latency</code></td><td>模拟触觉延迟。<strong>改大：</strong>更难及时反应，贴近真实总线延迟。</td></tr>
+      <tr><td><code>reset_random_quat</code></td><td><strong>True：</strong>物体初始朝向随机；当前默认 False，因与重力课程冲突（见 cfg 注释）。</td></tr>
+      <tr><td><code>object_cfg mass</code></td><td>名义 0.05kg。<strong>改：</strong>与 <code>randomize_mass</code> 范围一起影响手感。</td></tr>
+      <tr><td><code>object_cfg usd_path</code></td><td>圆柱体模型。<strong>改：</strong>换几何体需重做 grasp 缓存和奖励调参。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="ppo-yaml">四、ppo_cfg.yaml 全文与 PPO 代码映射</h2>
+<span class="code-cap">tasks/inhand_rotate/agents/ppo_cfg.yaml</span>
+<pre><code class="lang-yaml">seed: 42
+algo: PPO
+device: cuda
+network:
+  mlp:
+    units: [512, 256, 128]
+  priv_mlp:
+    units: [256, 128, 8]
+
+load_path: None
+
+algorithm:
+  experiment_name: 'debug'
+  normalize_input: True
+  normalize_value: True
+  value_bootstrap: True
+  num_actors: 16384
+  normalize_advantage: True
+  gamma: 0.99
+  tau: 0.95
+  learning_rate: 5e-3
+  kl_threshold: 0.02
+  horizon_length: 8
+  minibatch_size: 32768
+  mini_epochs: 5
+  clip_value: True
+  critic_coef: 4
+  entropy_coef: 0.0
+  e_clip: 0.2
+  bounds_loss_coef: 0.0001
+  truncate_grads: True
+  grad_norm: 1.0
+  save_best_after: 0
+  save_frequency: 500
+  max_agent_steps: 300000000
+  priv_info: True
+  priv_info_dim: 8
+  priv_info_embed_dim: 8</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">ppo_cfg.yaml 顶层键 · 初学者版（改了会怎样）</div>
+  <table>
+    <thead><tr><th>键</th><th>默认</th><th>白话 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>seed</code></td><td>42</td><td>算法随机种子；train.py 可用 <code>--seed</code> 覆盖。</td></tr>
+      <tr><td><code>algo</code></td><td>PPO</td><td>用哪个训练器类；蒸馏时 CLI 改 ProprioAdapt。</td></tr>
+      <tr><td><code>device</code></td><td>cuda</td><td>网络放哪块 GPU；无卡时改 cpu（极慢）。</td></tr>
+      <tr><td><code>network.mlp.units</code></td><td>[512,256,128]</td><td>Actor/Critic 隐藏层宽度。<strong>改：</strong>旧 checkpoint 不能加载。</td></tr>
+      <tr><td><code>load_path</code></td><td>None</td><td>默认不加载；蒸馏/play 必须 CLI 指定路径。</td></tr>
+      <tr><td><code>algorithm.experiment_name</code></td><td>debug</td><td>日志目录名 <code>logs/debug/</code>。<strong>改：</strong>实验分开存。</td></tr>
+      <tr><td><code>algorithm.max_agent_steps</code></td><td>3e8</td><td>总环境步上限。<strong>改小：</strong>更快结束，策略可能未收敛。</td></tr>
+      <tr><td><code>algorithm.learning_rate</code></td><td>5e-3</td><td>Adam 学习率。<strong>太大：</strong>发散；<strong>太小：</strong>学不动。</td></tr>
+      <tr><td><code>algorithm.gamma / tau</code></td><td>0.99 / 0.95</td><td>折扣与 GAE λ。<strong>改：</strong>影响「看多远的未来」。</td></tr>
+      <tr><td><code>algorithm.horizon_length</code></td><td>8</td><td>每次 rollout 步数 H。<strong>改：</strong>影响 batch_size = H×num_envs。</td></tr>
+      <tr><td><code>algorithm.minibatch_size</code></td><td>32768</td><td>SGD 子批大小；train.py 会按 num_envs 缩小。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">YAML 键 → PPO.__init__ 用法</div>
+  <table>
+    <thead><tr><th>YAML 路径</th><th>PPO 代码位置</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>device</code></td><td><code>full_config.train["device"]</code></td><td>模型与张量设备</td></tr>
+      <tr><td class="sym-col"><code>network.mlp.units</code></td><td><code>net_config['actor_units']</code></td><td>Actor/Critic MLP 宽度</td></tr>
+      <tr><td class="sym-col"><code>network.priv_mlp.units</code></td><td><code>net_config['priv_mlp_units']</code></td><td>特权信息编码 MLP</td></tr>
+      <tr><td class="sym-col"><code>algorithm.num_actors</code></td><td><code>self.num_actors</code></td><td>并行 env 数；train.py 用 CLI 覆盖</td></tr>
+      <tr><td class="sym-col"><code>algorithm.gamma</code></td><td><code>self.gamma</code></td><td>折扣因子（第 04 章 GAE）</td></tr>
+      <tr><td class="sym-col"><code>algorithm.tau</code></td><td><code>self.tau</code></td><td>GAE λ 对应 τ</td></tr>
+      <tr><td class="sym-col"><code>algorithm.learning_rate</code></td><td><code>self.last_lr</code> + Adam</td><td>初始学习率</td></tr>
+      <tr><td class="sym-col"><code>algorithm.kl_threshold</code></td><td><code>AdaptiveScheduler</code></td><td>KL 自适应调 lr（第 05 章）</td></tr>
+      <tr><td class="sym-col"><code>algorithm.horizon_length</code></td><td><code>self.horizon_length</code></td><td>每次 rollout 步数 H</td></tr>
+      <tr><td class="sym-col"><code>algorithm.minibatch_size</code></td><td><code>self.minibatch_size</code></td><td>SGD mini-batch；train 里 <code>min(num_envs*8, 32768)</code></td></tr>
+      <tr><td class="sym-col"><code>algorithm.mini_epochs</code></td><td><code>self.mini_epochs_num</code></td><td>每批数据重复训练轮数</td></tr>
+      <tr><td class="sym-col"><code>algorithm.e_clip</code></td><td><code>self.e_clip</code></td><td>PPO 裁剪 ε</td></tr>
+      <tr><td class="sym-col"><code>algorithm.clip_value</code></td><td><code>self.clip_value</code></td><td>是否裁剪 value loss</td></tr>
+      <tr><td class="sym-col"><code>algorithm.critic_coef</code></td><td><code>train_epoch</code> loss 组合</td><td>Critic loss 权重 0.5×coef</td></tr>
+      <tr><td class="sym-col"><code>algorithm.entropy_coef</code></td><td><code>train_epoch</code></td><td>熵 bonus（本项目为 0）</td></tr>
+      <tr><td class="sym-col"><code>algorithm.bounds_loss_coef</code></td><td><code>train_epoch</code> bounded loss</td><td>动作越界软惩罚</td></tr>
+      <tr><td class="sym-col"><code>algorithm.truncate_grads</code></td><td><code>clip_grad_norm_</code></td><td>是否梯度裁剪</td></tr>
+      <tr><td class="sym-col"><code>algorithm.grad_norm</code></td><td><code>clip_grad_norm_(..., grad_norm)</code></td><td>最大梯度范数</td></tr>
+      <tr><td class="sym-col"><code>algorithm.normalize_*</code></td><td>RunningMeanStd / advantage</td><td>输入、价值、优势归一化</td></tr>
+      <tr><td class="sym-col"><code>algorithm.value_bootstrap</code></td><td><code>play_steps</code> timeout 奖励</td><td>截断 episode 时 bootstrap</td></tr>
+      <tr><td class="sym-col"><code>algorithm.save_frequency</code></td><td><code>train()</code> checkpoint</td><td>每 N epoch 存 last</td></tr>
+      <tr><td class="sym-col"><code>algorithm.max_agent_steps</code></td><td><code>while agent_steps &lt; max</code></td><td>训练总环境步</td></tr>
+      <tr><td class="sym-col"><code>algorithm.priv_info*</code></td><td><code>ActorCritic</code> priv 分支</td><td>RMA 特权维数与嵌入</td></tr>
+      <tr><td class="sym-col"><code>algo</code></td><td><code>eval(agent_cfg["algo"])</code></td><td><code>PPO</code> 或 <code>ProprioAdapt</code></td></tr>
+      <tr><td class="sym-col"><code>load_path</code></td><td><code>restore_train/test</code></td><td>checkpoint 路径</td></tr>
+      <tr><td class="sym-col"><code>algorithm.experiment_name</code></td><td><code>logs/{experiment_name}/</code></td><td>TensorBoard 与 nn 根目录名</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>批大小关系（第 05 章）：<code>batch_size = horizon_length × num_actors</code>，例如 H=8、num_envs=10 → batch_size=80；minibatch_size 在 train.py 被设为 <code>min(80, 32768)=80</code>，整除成立才能训练（play 时 <code>test=True</code> 可放宽断言）。</p>
+
+<h2 id="wrapper">五、ConfigWrapper：train / task / test</h2>
+<span class="code-cap">wrapper/config_wrapper.py · 完整实现</span>
+<pre><code class="lang-py">class ConfigWrapper:
+    def __init__(self, agent_cfg, env_cfg, test=False):
+        self.train = agent_cfg      # ppo_cfg.yaml 合并 CLI 后的 dict
+        self.task = env_cfg         # XhandWaveEnvCfg dataclass 实例
+        self.test = test            # play.py 传 True</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">ConfigWrapper 三属性 · 白话</div>
+  <table>
+    <thead><tr><th>属性</th><th>里面是什么</th><th>谁在读 · 改了会怎样</th></tr></thead>
+    <tbody>
+      <tr><td><code>.train</code></td><td>算法 dict（yaml+CLI）</td><td>PPO 读学习率、gamma 等。<strong>命名反直觉：</strong>不是「训练开关」，是 agent 配置。</td></tr>
+      <tr><td><code>.task</code></td><td>环境 dataclass</td><td>环境类、deploy 读 action_space、关节名。<strong>改 cfg 文件：</strong>影响仿真与真机对齐。</td></tr>
+      <tr><td><code>.test</code></td><td>bool</td><td>play 设 True 放宽 batch 检查。<strong>训练误设 True：</strong>可能掩盖 minibatch 配置错误。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">ConfigWrapper 字段谁在读</div>
+  <table>
+    <thead><tr><th>属性</th><th>类型</th><th>读者</th><th>典型访问</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>.train</code></td><td><code>dict</code></td><td><code>PPO</code>、<code>ProprioAdapt</code></td><td><code>full_config.train["algorithm"]["gamma"]</code></td></tr>
+      <tr><td class="sym-col"><code>.task</code></td><td><code>DirectRLEnvCfg</code></td><td>环境类、部署代码</td><td><code>full_config.task.action_space</code></td></tr>
+      <tr><td class="sym-col"><code>.test</code></td><td><code>bool</code></td><td><code>PPO.__init__</code></td><td>放宽 minibatch 整除断言</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>命名略反直觉：<code>.train</code> 存的是<strong>算法</strong>配置（historical 命名来自 rl_games），<code>.task</code> 才是<strong>环境</strong>配置。部署侧 <code>deploy_xhand</code> 同样构造 <code>ConfigWrapper</code>，只读 <code>.task</code> 的 <code>actuated_joint_names</code>、<code>prop_hist_len</code> 等对齐真机。</p>
+
+<h2 id="hydra-flow">六、Hydra 加载流程（串联）</h2>
+<div class="intuition">
+整条链像<strong>快递分拣</strong>：<code>--task</code> 是收件人姓名 → gym 登记表查到两箱货（env cfg + agent yaml）→ Hydra 拆箱成对象 → train.py 根据 CLI 贴新标签 → ConfigWrapper 装箱 → PPO 签收。
+</div>
+<ol>
+  <li>用户：<code>python train.py --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --num_envs 10</code></li>
+  <li><code>gym.spec(task).kwargs</code> 取出两个 entry point 字符串</li>
+  <li>Hydra 实例化 <code>XhandWaveEnvCfg()</code>，加载 <code>ppo_cfg.yaml</code> → <code>main(env_cfg, agent_cfg)</code></li>
+  <li><code>train.py</code> 用 CLI 覆盖 <code>env_cfg</code> / <code>agent_cfg</code> 字段</li>
+  <li><code>ConfigWrapper(agent_cfg, env_cfg)</code> → <code>PPO(env, full_config=config)</code></li>
+  <li>PPO 从 <code>full_config.train</code> 读超参，从 <code>env.action_space</code> 读维度（必须与 cfg 一致）</li>
+</ol>
+
+<div class="math-block">
+$$\text{spec(kwargs)} \xrightarrow{\text{Hydra}} (env\_cfg, agent\_cfg) \xrightarrow{\text{CLI}} (env\_cfg', agent\_cfg') \xrightarrow{\text{ConfigWrapper}} \text{PPO/env}$$</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>CLI、Hydra、train.py 里的赋值，到底谁优先级最高？<br>
+  对同一字段：<strong>train.py 里显式 CLI 覆盖</strong>（如 <code>--num_envs</code>）&gt; <strong>Hydra 命令行</strong>（如 <code>env.scene.num_envs=10</code>）&gt; <strong>yaml/py 文件默认值</strong>。日常改并行数用 <code>--num_envs</code> 最简单。
+</div>
+
+<h2 id="contact">七、contact_sensor 与物体配置</h2>
+<p>五指指尖各有一个 <code>ContactSensorCfg</code>，过滤只保留与 <code>/object</code> 的接触，供触觉观测与奖励使用：</p>
+<span class="code-cap">xhand_wave_env_cfg.py · 拇指传感器示例</span>
+<pre><code class="lang-py">ContactSensorCfg(
+    prim_path="/World/envs/env_.*/Robot/right_hand_thumb_dip_link",
+    history_length=3,
+    **_CONTACT_KW,   # v2.3+ 自动加 track_contact_points 等
+    filter_prim_paths_expr=["/World/envs/env_.*/object"],
+),</code></pre>
+<p><code>fingertip_body_names</code> 与传感器 prim 对齐，共 5 个 dip link。触觉相关开关：</p>
+<table>
+  <thead><tr><th>字段</th><th>默认值</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>enable_tactile</code></td><td>True</td><td>是否读接触力进 obs</td></tr>
+    <tr><td><code>binary_contact</code></td><td>False</td><td>True 时力&gt;阈值变 0/1</td></tr>
+    <tr><td><code>contact_threshold</code></td><td>0.05</td><td>二值化阈值</td></tr>
+    <tr><td><code>contact_smooth</code></td><td>0.5</td><td>指数平滑系数</td></tr>
+    <tr><td><code>contact_latency</code></td><td>0.005 s</td><td>模拟真机延迟</td></tr>
+  </tbody>
+</table>
+
+<span class="code-cap">xhand_wave_env_cfg.py · object_cfg</span>
+<pre><code class="lang-py">object_cfg: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/object",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=.../assets/cylinder/cylinder.usd,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        scale=(1., 1., 1.),   # 运行时由 scale_range 随机化
+    ),
+    init_state=RigidObjectCfg.InitialStateCfg(
+        pos=(-0.09559, -0.00517, 0.61906), rot=(1.0, 0.0, 0.0, 0.0)
+    ),
+)</code></pre>
+<p>物体初始位姿与 <code>hand_init_pose</code> 配合，使圆柱落在掌心上方；实际 reset 时从 grasp cache 覆盖关节+物体状态。</p>
+
+<div class="walk-table">
+  <div class="walktitle">ContactSensorCfg 示例行 · 白话</div>
+  <table>
+    <thead><tr><th>代码</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>prim_path=".../thumb_dip_link"</code></td><td>传感器挂在拇指指尖刚体上。</td></tr>
+      <tr><td><code>filter_prim_paths_expr=[".../object"]</code></td><td>只统计与圆柱体的接触力，忽略自碰。</td></tr>
+      <tr><td><code>history_length=3</code></td><td>保留最近 3 步接触历史，与 obs 堆叠呼应。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="random">八、域随机化参数一览</h2>
+<div class="symtable">
+  <div class="symtitle">xhand_wave_env_cfg · randomize 块</div>
+  <table>
+    <thead><tr><th>字段</th><th>默认</th><th>随机范围 / 说明</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col"><code>randomize_pd_gains</code></td><td>True</td><td>P/D 各 × [0.5, 2]</td></tr>
+      <tr><td class="sym-col"><code>randomize_friction</code></td><td>True</td><td>elastomer/metal/object base × [0.5, 2]</td></tr>
+      <tr><td class="sym-col"><code>elastomer_base_friction</code></td><td>0.8</td><td>指尖 elastomer 名义摩擦</td></tr>
+      <tr><td class="sym-col"><code>metal_base_friction</code></td><td>0.1</td><td>金属连杆</td></tr>
+      <tr><td class="sym-col"><code>object_base_friction</code></td><td>0.5</td><td>圆柱体</td></tr>
+      <tr><td class="sym-col"><code>randomize_com</code></td><td>True</td><td>COM ± [0.01, 0.01] m</td></tr>
+      <tr><td class="sym-col"><code>randomize_mass</code></td><td>True</td><td>质量 [0.01, 0.25] kg</td></tr>
+      <tr><td class="sym-col"><code>force_scale</code></td><td>2</td><td>随机外力扰动幅度</td></tr>
+      <tr><td class="sym-col"><code>random_force_prob_scalar</code></td><td>0.25</td><td>每步施加外力概率</td></tr>
+      <tr><td class="sym-col"><code>gravity_curriculum</code></td><td>True</td><td>掉落率低则重力 +0.05 直至 -9.81</td></tr>
+      <tr><td class="sym-col"><code>dof_limits_scale</code></td><td>0.9</td><td>URDF 限位 ×0.9 对齐真机</td></tr>
+      <tr><td class="sym-col"><code>joint_noise_scale</code></td><td>0.02</td><td>关节读数噪声</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>原理见<a href="09-domain-randomization.html">第 09 章</a>；play 时这些在脚本层被显式关掉（<a href="14-entry-scripts.html">第 14 章</a>）。</p>
+
+<h2 id="hydra-override">八点五、Hydra 命令行覆盖示例</h2>
+<p>除了 <code>train.py</code> 里写死的 CLI，你还可以在命令末尾加 Hydra 风格覆盖（会进入 <code>hydra_args</code>）：</p>
+<pre><code>python rl_isaaclab/scripts/train.py --task Isaac-Inhand-Rotate-Xhand-Wave-v0 \
+  --headless --num_envs 10 \
+  env.sim.gravity="(0.0,0.0,-9.81)" \
+  agent.algorithm.learning_rate=1e-3</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">Hydra 覆盖写法 · 初学者</div>
+  <table>
+    <thead><tr><th>写法</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>env.字段.子字段=值</code></td><td>改环境 cfg（<code>env_cfg</code>）上的字段，不必改 py 文件。</td></tr>
+      <tr><td><code>agent.algorithm.xxx=yyy</code></td><td>改 agent yaml 里的嵌套键，如学习率。</td></tr>
+      <tr><td>与 <code>--num_envs</code> 同时存在</td><td><code>train.py</code> 里对 num_envs 的赋值在 main 开头，通常<strong>覆盖</strong> Hydra 的 env.scene.num_envs（以脚本为准）。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>我该用 Hydra 覆盖还是改 py/yaml？<br>
+  <strong>一次性实验</strong>用 Hydra 或 CLI；<strong>确定要长期保留</strong>的改动写进 py/yaml 并 commit，否则复现时容易忘命令行里加了什么。
+</div>
+
+<h2 id="ppo-train">九、YAML 在 train_epoch 中的消费</h2>
+<p>除 <code>__init__</code> 外，下列键在 PPO 训练循环里直接影响 loss（对应<a href="05-ppo.html">第 05 章</a>公式）：</p>
+<span class="code-cap">ppo.py · train_epoch 核心（节选）</span>
+<pre><code class="lang-py">surr1 = advantage * ratio
+surr2 = advantage * torch.clamp(ratio, 1.0 - self.e_clip, 1.0 + self.e_clip)
+a_loss = torch.max(-surr1, -surr2)
+
+value_pred_clipped = value_preds + (values - value_preds).clamp(-self.e_clip, self.e_clip)
+c_loss = torch.max((values - returns)**2, (value_pred_clipped - returns)**2)
+
+loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+
+if self.truncate_grads:
+    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+
+av_kls = torch.mean(torch.stack(ep_kls))
+self.last_lr = self.scheduler.update(self.last_lr, av_kls.item())  # kl_threshold</code></pre>
+<p><code>play_steps</code> 里 <code>value_bootstrap</code> 与 <code>gamma</code> 处理 timeout：</p>
+<span class="code-cap">ppo.py · shaped_rewards</span>
+<pre><code class="lang-py">shaped_rewards = 0.01 * rewards.clone()
+if self.value_bootstrap and 'time_outs' in infos:
+    shaped_rewards += self.gamma * res_dict['values'] * infos['time_outs'].unsqueeze(1).float()</code></pre>
+
+<h2 id="field-map">九点五、cfg 字段 → 训练现象速查</h2>
+<div class="walk-table">
+  <div class="walktitle">改一个旋钮，训练时你可能看到什么</div>
+  <table>
+    <thead><tr><th>如果你改了…</th><th>训练早期可能的现象</th></tr></thead>
+    <tbody>
+      <tr><td><code>rotate_reward_scale</code> ↑</td><td>平均 reward 数值变大；物体更容易被甩飞（掉落 reset 变多）</td></tr>
+      <tr><td><code>object_linvel_penalty_scale</code> 绝对值 ↑</td><td>动作更保守，转速可能下降，掉落率下降</td></tr>
+      <tr><td><code>sim.gravity</code> 直接 -9.81</td><td>初期掉落极多，需更久 gravity curriculum 或更多 grasp 缓存</td></tr>
+      <tr><td><code>randomize_friction</code> False</td><td>曲线更平滑，但 play/真机换表面材质时可能打滑</td></tr>
+      <tr><td><code>algorithm.learning_rate</code> ↑</td><td>loss 波动大，可能 NaN；KL 报警变多</td></tr>
+      <tr><td><code>algorithm.horizon_length</code> ↑</td><td>每轮 rollout 更久，显存/内存占用升</td></tr>
+      <tr><td><code>action_space</code> 与关节列表不一致</td><td>启动即失败或 pytest 红灯，不会「慢慢变坏」</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="files">十、配置文件物理路径</h2>
+<table>
+  <thead><tr><th>逻辑名</th><th>仓库路径</th></tr></thead>
+  <tbody>
+    <tr><td>环境 cfg（Xhand 训练）</td><td><code>rl_isaaclab/tasks/inhand_rotate/xhand_wave_env_cfg.py</code></td></tr>
+    <tr><td>环境 cfg（Xhand 抓取）</td><td><code>rl_isaaclab/tasks/inhand_rotate/xhand_wave_grasp_env_cfg.py</code></td></tr>
+    <tr><td>算法 yaml</td><td><code>rl_isaaclab/tasks/inhand_rotate/agents/ppo_cfg.yaml</code></td></tr>
+    <tr><td>gym 注册</td><td><code>rl_isaaclab/tasks/inhand_rotate/__init__.py</code></td></tr>
+    <tr><td>训练快照</td><td><code>logs/&lt;experiment&gt;/&lt;时间&gt;/env_cfg_PPO.py</code> + <code>agent_cfg_PPO.yaml</code></td></tr>
+  </tbody>
+</table>
+<p>train.py 用 <code>gym.spec(...).kwargs</code> 反查路径并 <code>shutil.copy</code> 到 log 目录，保证「跑实验时用的就是磁盘上这两份文件」。</p>
+
+<div class="intuition">
+改配置后心里过一遍<strong>「三个一致」</strong>：动作维一致（21）、观测维一致（186）、缓存文件名一致（scale 后缀）。项目用 <code>pytest tests/test_actuated_joints.py</code> 帮你查前两样。
+</div>
+
+<h2 id="consistency">十一、配置一致性检查清单</h2>
+<table>
+  <thead><tr><th>检查项</th><th>位置 A</th><th>位置 B</th><th>期望</th></tr></thead>
+  <tbody>
+    <tr><td>动作维</td><td><code>action_space</code></td><td><code>len(actuated_joint_names)</code></td><td>21</td></tr>
+    <tr><td>观测维</td><td><code>observation_space</code></td><td>环境 <code>_get_observations</code></td><td>186</td></tr>
+    <tr><td>并行数</td><td><code>scene.num_envs</code></td><td><code>algorithm.num_actors</code></td><td>train.py 同步覆盖</td></tr>
+    <tr><td>特权维</td><td><code>priv_info_dim</code> (env)</td><td><code>algorithm.priv_info_dim</code> (yaml)</td><td>8</td></tr>
+    <tr><td>缓存前缀</td><td><code>grasp_cache_path</code></td><td><code>gen_grasp</code> 产出文件</td><td>前缀一致</td></tr>
+    <tr><td>物体 scale</td><td><code>scale_range</code> (train cfg)</td><td>grasp cfg + npy 后缀</td><td>如 <code>[0.4,0.6,8]</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="register-walk">十二、gym.register 完整代码 walk-table（复习）</h2>
+<div class="walk-table">
+  <div class="walktitle">__init__.py 里每一行在登记什么</div>
+  <table>
+    <thead><tr><th>代码行</th><th>白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><code>import gymnasium as gym</code></td><td>引入 gym 注册 API。</td></tr>
+      <tr><td><code>from . import agents</code></td><td>agents 子包里有 <code>ppo_cfg.yaml</code> 路径。</td></tr>
+      <tr><td><code>gym.register( id=... )</code></td><td>开始登记一个任务；id 必须全局唯一。</td></tr>
+      <tr><td><code>entry_point=...xhand_wave_env:XhandWaveInhandRotateEnv</code></td><td>训练用环境类；grasp 变体换成 <code>...GraspEnv</code>。</td></tr>
+      <tr><td><code>kwargs env_cfg_entry_point</code></td><td>Hydra 导入 <code>XhandWaveEnvCfg</code> 类并实例化。</td></tr>
+      <tr><td><code>kwargs agent_cfg_entry_point</code></td><td>Hydra 读取 <code>agents/ppo_cfg.yaml</code> 成 dict。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="edit-tips">十三、改配置时的实践建议</h2>
+<div class="walk-table">
+  <div class="walktitle">改配置决策树（零基础）</div>
+  <table>
+    <thead><tr><th>你想…</th><th>改哪里</th><th>还要做什么</th></tr></thead>
+    <tbody>
+      <tr><td>笔记本能跑起来</td><td>CLI <code>--num_envs 10 --headless</code></td><td>确保有 grasp 缓存</td></tr>
+      <tr><td>学更快/更慢</td><td><code>ppo_cfg.yaml</code> learning_rate、horizon</td><td>观察 TensorBoard；旧 ckpt 可 resume 若网络未改</td></tr>
+      <tr><td>更稳、少摔笔</td><td>奖励 penalty scale、gravity 课程</td><td>重新训练；记录改了哪些 scale</td></tr>
+      <tr><td>换物体尺寸分布</td><td><code>scale_range</code> + grasp cfg</td><td>重跑 gen_grasp + 重训</td></tr>
+      <tr><td>换灵巧手 URDF</td><td><code>robot_cfg</code>、关节名、action/obs 维</td><td>全链路测试 + 部署对齐</td></tr>
+    </tbody>
+  </table>
+</div>
+<ul>
+  <li><strong>只改并行数</strong>：命令行 <code>--num_envs N</code> 即可，不必改 yaml。</li>
+  <li><strong>改奖励</strong>：编辑 <code>xhand_wave_env_cfg.py</code> 的 scale 字段；需重新训练，旧 checkpoint 不自动适配。</li>
+  <li><strong>改网络宽度</strong>：改 <code>ppo_cfg.yaml</code> 的 <code>network.mlp.units</code>；旧权重 shape 不匹配，不能 <code>--resume</code>。</li>
+  <li><strong>改 experiment 名</strong>：改 <code>algorithm.experiment_name</code>，日志进 <code>logs/新名字/</code>。</li>
+  <li><strong>ProprioAdapt</strong>：yaml 里仍用同一 <code>ppo_cfg.yaml</code>，但 <code>train.py</code> 把 <code>algo</code> 覆盖为 <code>ProprioAdapt</code>，并强制重力（<a href="14-entry-scripts.html">第 14 章</a>）。</li>
+</ul>
+
+<h2 id="cheatsheet">十四、配置字段作弊单（打印贴墙版）</h2>
+<div class="walk-table">
+  <div class="walktitle">最常动的 15 个旋钮 · 一句话记忆</div>
+  <table>
+    <thead><tr><th>字段</th><th>文件</th><th>一句话</th></tr></thead>
+    <tbody>
+      <tr><td><code>scene.num_envs</code></td><td>env cfg / CLI</td><td>几只手同时练；笔记本用 10。</td></tr>
+      <tr><td><code>action_space</code></td><td>env cfg</td><td>必须 21，等于关节列表长度。</td></tr>
+      <tr><td><code>observation_space</code></td><td>env cfg</td><td>必须 186，等于 obs 拼接公式。</td></tr>
+      <tr><td><code>decimation</code></td><td>env cfg</td><td>12 → 20Hz 控制，对齐真机。</td></tr>
+      <tr><td><code>grasp_cache_path</code></td><td>env cfg</td><td>抓取 npy 前缀；没文件不能训。</td></tr>
+      <tr><td><code>scale_range</code></td><td>env cfg + grasp cfg</td><td>物体尺寸档；与 npy 后缀绑定。</td></tr>
+      <tr><td><code>gravity_curriculum</code></td><td>env cfg</td><td>慢慢加重力；蒸馏时 train 会关。</td></tr>
+      <tr><td><code>rotate_reward_scale</code></td><td>env cfg</td><td>转笔有多重要。</td></tr>
+      <tr><td><code>actuated_joint_names</code></td><td>env cfg</td><td>动作每一维对应谁；顺序神圣不可侵犯。</td></tr>
+      <tr><td><code>algorithm.learning_rate</code></td><td>yaml</td><td>PPO 步长；太大炸、太小磨。</td></tr>
+      <tr><td><code>algorithm.horizon_length</code></td><td>yaml</td><td>每次收集几步再更新。</td></tr>
+      <tr><td><code>algorithm.max_agent_steps</code></td><td>yaml / CLI</td><td>总共练多少环境步。</td></tr>
+      <tr><td><code>algorithm.experiment_name</code></td><td>yaml</td><td>日志文件夹名。</td></tr>
+      <tr><td><code>network.mlp.units</code></td><td>yaml</td><td>网络多胖；改了要重训。</td></tr>
+      <tr><td><code>id</code> / <code>entry_point</code></td><td>__init__.py</td><td>任务名与环境类；<code>--task</code> 靠它。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>配置改乱了怎么恢复？<br>
+  用 git 还原 <code>xhand_wave_env_cfg.py</code> / <code>ppo_cfg.yaml</code>；或从某次训练的 <code>logs/.../env_cfg_PPO.py</code> 与 <code>agent_cfg_PPO.yaml</code> 快照复制回来（train.py 第 94–98 行会自动存这两份）。
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？运行 test_actuated_joints（无需 Isaac Sim）</summary>
+  <div class="tryit-body">
+    <p>项目自带 AST 测试，验证 cfg 与 URDF 一致——不需要启动仿真：</p>
+    <pre><code>cd /media/user/Data/Robotera/era_dexhand_lab
+pytest tests/test_actuated_joints.py -v</code></pre>
+    <p>测试内容（摘自 <code>tests/test_actuated_joints.py</code>）：</p>
+    <ul>
+      <li><code>test_action_space_is_21</code> — <code>action_space == 21</code></li>
+      <li><code>test_actuated_joints_count_21</code> — 列表长度 21</li>
+      <li><code>test_actuated_joints_match_urdf_revolutes</code> — 与 URDF revolute 集合完全一致</li>
+      <li><code>test_init_joint_pos_covers_all_21</code> — <code>robot_cfg.init_state.joint_pos</code> 覆盖全部关节</li>
+      <li><code>test_observation_space_matches_21dof</code> — <code>obs == (21+21+5+15)*3 == 186</code></li>
+    </ul>
+    <p>改 <code>actuated_joint_names</code> 或 <code>observation_space</code> 后应先跑此测试，再开 Isaac 训练。</p>
+  </div>
+</details>
+
+<h2 id="yaml-mini">十四点五、ppo_cfg 里和初学者最相关的 8 个数字</h2>
+<div class="walk-table">
+  <div class="walktitle">先只盯这 8 个，别被整页 yaml 吓到</div>
+  <table>
+    <thead><tr><th>键</th><th>值</th><th>人话</th><th>乱改后果</th></tr></thead>
+    <tbody>
+      <tr><td><code>learning_rate</code></td><td>5e-3</td><td>每次梯度更新迈多大步</td><td>太大：loss 飞；太小：半天不涨 reward</td></tr>
+      <tr><td><code>gamma</code></td><td>0.99</td><td>多看重未来奖励</td><td>太小：短视；太大：训练不稳定</td></tr>
+      <tr><td><code>horizon_length</code></td><td>8</td><td>攒几步经验再学习</td><td>与 num_envs 一起决定 batch 大小</td></tr>
+      <tr><td><code>mini_epochs</code></td><td>5</td><td>同一批数据重复学几遍</td><td>太多：过拟合旧数据</td></tr>
+      <tr><td><code>e_clip</code></td><td>0.2</td><td>PPO 信任区域</td><td>太大：策略突变；太小：学不动</td></tr>
+      <tr><td><code>max_agent_steps</code></td><td>3e8</td><td>总训练步数预算</td><td>改小：早停；改大：更久</td></tr>
+      <tr><td><code>num_actors</code></td><td>16384</td><td>应等于 num_envs</td><td>不一致：张量维度错误</td></tr>
+      <tr><td><code>experiment_name</code></td><td>debug</td><td>日志子文件夹名</td><td>改：区分实验</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="glossary-recap">十五、本章术语回顾</h2>
+<div class="glossary">
+  <h4>读完第 15 章应能口头解释</h4>
+  <dl>
+    <dt><code>gym.register</code> 最少记住哪几个参数？</dt>
+    <dd><code>id</code>、<code>entry_point</code>、<code>env_cfg_entry_point</code>、<code>agent_cfg_entry_point</code>。</dd>
+    <dt><code>action_space=21</code> 和关节列表什么关系？</dt>
+    <dd>长度必须相等；列表顺序即动作向量下标。</dd>
+    <dt>186 维观测怎么来的？</dt>
+    <dd>(21+21+5+15)×3 帧堆叠；改一块要改 <code>observation_space</code> 和网络。</dd>
+    <dt>ConfigWrapper 为什么 <code>.train</code> 是算法配置？</dt>
+    <dd>历史命名；记 <code>.task</code>=环境、<code>.train</code>=agent 即可。</dd>
+    <dt>改 <code>scale_range</code> 最少几步？</dt>
+    <dd>改 train+grasp cfg → 重跑 gen_grasp → 再训练。</dd>
+    <dt>下一章读什么？</dt>
+    <dd>第 16 章：环境类 <code>reset</code> / <code>step</code> 里如何用这些 cfg 字段。</dd>
+  </dl>
+</div>
+
+<div class="intuition">
+配置章是 Part B 的「字典」。后面读 <code>xhand_wave_env.py</code> 时，看到 <code>self.cfg.xxx</code> 就回来查本章：<strong>这个 xxx 是哪颗旋钮、拧了会怎样</strong>。
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b>有没有「一键检查我 cfg 有没有改坏」？<br>
+  有。在项目根运行 <code>pytest tests/test_actuated_joints.py -v</code>（本章 tryit 有命令）。它检查 21 维动作、186 维观测、关节名与 URDF 是否一致——<strong>不需要启动 Isaac Sim</strong>，改 cfg 后应先跑这个再开训练。
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">三份「真相来源」文件 · 改配置时别搞混</div>
+  <table>
+    <thead><tr><th>文件</th><th>管什么</th><th>典型读者</th></tr></thead>
+    <tbody>
+      <tr><td><code>tasks/inhand_rotate/__init__.py</code></td><td>任务名 ↔ 环境类 ↔ cfg 入口</td><td>加新任务、改 <code>--task</code> 字符串时</td></tr>
+      <tr><td><code>xhand_wave_env_cfg.py</code></td><td>仿真、奖励、随机化、21 DOF</td><td>调物理、奖励、触觉时</td></tr>
+      <tr><td><code>agents/ppo_cfg.yaml</code></td><td>PPO 超参、网络宽度</td><td>调学习率、训练步数时</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">register → make → PPO 数据流（背下来就不怕迷路）</div>
+  <table>
+    <thead><tr><th>步骤</th><th>代码位置</th><th>产出</th></tr></thead>
+    <tbody>
+      <tr><td>1. import 任务包</td><td>train.py 第 49 行</td><td>gym 登记表有条目</td></tr>
+      <tr><td>2. Hydra 读 entry_point</td><td><code>@hydra_task_config</code></td><td><code>env_cfg</code> 对象 + <code>agent_cfg</code> dict</td></tr>
+      <tr><td>3. CLI 覆盖</td><td>train.py main 开头</td><td><code>num_envs</code> 等现场值</td></tr>
+      <tr><td>4. ConfigWrapper</td><td>train.py 第 76 行</td><td><code>config.train</code> / <code>config.task</code></td></tr>
+      <tr><td>5. gym.make(cfg=env_cfg)</td><td>train.py 第 90 行</td><td>仿真实例，按 cfg 搭场景</td></tr>
+      <tr><td>6. PPO(full_config=config)</td><td>train.py 第 92 行</td><td>从 <code>config.train</code> 读超参开训</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>你可能会问：</b><code>kwargs</code> 里还能塞别的键吗？<br>
+  Gymnasium 允许，但本项目 Hydra 只认 <code>env_cfg_entry_point</code> 和 <code>agent_cfg_entry_point</code>。乱塞键不会被 train 用到，除非你自己改 <code>hydra_task_config</code> 逻辑——初学者不要试。
+</div>
+
+<p class="muted">记住：<code>--task</code> 字符串 = <code>__init__.py</code> 里 <code>gym.register(id=...)</code> 的 <code>id</code>；拼错一字，Hydra 就找不到配置入口。</p>
+
+<div class="intuition">
+把 <code>xhand_wave_env_cfg.py</code> 打印出来贴墙太长了——只需记住：<strong>前半</strong>管维度与仿真，<strong>中间</strong>管手和物体，<strong>后半</strong>管奖励、缓存、随机化。改哪块问题，就翻哪块 walk-table。
+</div>
+
+<div class="tip">
+<b>本章小结。</b> 任务 ID 通过 <code>gym.register</code> 绑定环境类 + 两份配置 entry point；<code>XhandWaveEnvCfg</code> 管仿真/奖励/21 DOF；<code>ppo_cfg.yaml</code> 管 PPO 超参与网络；<code>ConfigWrapper</code> 把二者交给算法。CLI 优先级最高。下一章进入环境类内部：reset/step 生命周期。</div>
+
+<div class="pager">
+  <a href="14-entry-scripts.html"><div class="dir">← 上一章</div><div class="ttl">14 · 入口脚本逐行导读</div></a>
+  <a class="next" href="16-env-lifecycle.html"><div class="dir">下一章 →</div><div class="ttl">16 · 环境生命周期</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 15 章 · 配置系统</footer>
+
+<script>
+Viz.configPriorityStack('cfgStack', 'cfgOut');
+</script>
+</body>
+</html>

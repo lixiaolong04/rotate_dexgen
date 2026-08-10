@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>05 · PPO 核心算法</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 05 章</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 05 · Stage 1 主算法</div>
+  <h1>PPO 核心算法</h1>
+  <p class="sub">近端策略优化：用一把"裁剪剪刀"约束每次更新的步子，做到小步快跑、稳而不翻。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>代码详解。</b> PPO 在本仓库的实现见 Part B <a href="20-ppo-training-loop.html">第 20 章</a>（<code>play_steps</code> / <code>train_epoch</code> 逐行）；全链路复盘见 <a href="22-one-step-capstone.html">第 22 章</a>。</div>
+
+<h2 id="pg">一、出发点：策略梯度</h2>
+<p>我们要最大化目标 $J(\theta)$（第 01 章）。最朴素的办法是策略梯度定理给出的方向：</p>
+<div class="math-block">
+$$\nabla_\theta J(\theta) \;=\; \EE_{\tau\sim\pi_\theta}\!\left[\sum_t \nabla_\theta \log\pi_\theta(a_t\mid s_t)\,\hat A_t\right].$$
+</div>
+<div class="intuition">
+这个式子其实很好懂：把每个动作的"出现概率的对数"往上推或往下压，<strong>推多少由优势 Â 决定</strong>。优势为正（这步是好棋）→ 提高它的概率；优势为负（臭棋）→ 降低它的概率。第 04 章辛苦算的 Â，就是用在这里。
+</div>
+
+<h3 id="problem">朴素策略梯度的致命伤</h3>
+<p>问题是：这个梯度只在"当前策略附近"才准。如果一步迈太大，策略剧变，之前采的数据全部失效，训练直接崩盘。我们需要一个机制：<strong>既朝好方向走，又不许一步迈太远。</strong></p>
+
+<h2 id="ratio">二、概率比 r(θ)</h2>
+<p>PPO 用<strong>重要性采样比（概率比）</strong>衡量"新策略相对旧策略，把这个动作的概率改了多少"：</p>
+<div class="math-block">
+$$r_t(\theta) \;=\; \frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}
+\;=\; \exp\!\big(\log\pi_\theta - \log\pi_{\theta_{\text{old}}}\big).$$
+</div>
+<ul>
+  <li>$r_t = 1$：新旧策略对这个动作看法一致。</li>
+  <li>$r_t > 1$：新策略更爱这个动作。</li>
+  <li>$r_t < 1$：新策略更嫌弃它。</li>
+</ul>
+<span class="code-cap">ppo.py · train_epoch</span>
+<pre><code class="lang-py">ratio = torch.exp(old_action_log_probs - action_log_probs)
+surr1 = advantage * ratio
+surr2 = advantage * torch.clamp(ratio, 1.0 - self.e_clip, 1.0 + self.e_clip)
+a_loss = torch.max(-surr1, -surr2)</code></pre>
+<div class="warn">
+<b>代码命名小陷阱。</b> 这里 <code>old_action_log_probs</code> 和 <code>action_log_probs</code> 存的其实是 <b>neglogp（负对数概率）</b>。所以 <code>exp(old_neglogp − new_neglogp) = exp(logp_new − logp_old) = r(θ)</code>，符号正好对上，结果就是上面公式里的概率比。别被变量名骗了。
+</div>
+
+<h2 id="clip">三、裁剪代理目标（PPO 的灵魂）</h2>
+<p>PPO 最大化下面这个<strong>裁剪代理目标</strong>，对每个样本取两项的较小值：</p>
+<div class="math-block">
+$$L^{\text{CLIP}}(\theta) \;=\; \EE_t\Big[\,
+\min\big(\,r_t\,\hat A_t,\;\; \clip(r_t,\,1-\epsilon,\,1+\epsilon)\,\hat A_t\,\big)\Big].$$
+</div>
+
+<div class="symtable">
+  <div class="symtitle">符号表 · 裁剪目标</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$r_t$</td><td>概率比。</td></tr>
+      <tr><td class="sym-col">$\hat A_t$</td><td>标准化后的 GAE 优势（第 04 章）。</td></tr>
+      <tr><td class="sym-col">$\epsilon$</td><td>裁剪半径（代码 <code>e_clip</code>，本项目 = 0.2），即"每步最多改动 ±20%"。</td></tr>
+      <tr><td class="sym-col">$\clip(r,1-\epsilon,1+\epsilon)$</td><td>把概率比强行夹在 $[0.8,1.2]$。</td></tr>
+      <tr><td class="sym-col">$\min(\cdot,\cdot)$</td><td>取两项较小，得到原目标的<b>悲观下界</b>。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="why-clip">为什么"取小"就能防止迈太大？</h3>
+<p>分两种情况看（这是理解 PPO 最关键的一段）：</p>
+<table>
+  <thead><tr><th>情况</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><b>优势 Â &gt; 0</b>（好动作，想提高概率）</td><td>当 $r$ 已经涨到 $1+\epsilon$ 以上，裁剪项把它<b>封顶</b>，目标不再增大 → 没有动力把概率推得更高。<b>好动作也不许一次性吹太猛。</b></td></tr>
+    <tr><td><b>优势 Â &lt; 0</b>（坏动作，想降低概率）</td><td>当 $r$ 已经跌到 $1-\epsilon$ 以下，裁剪项<b>托底</b> → 没有动力把概率压得更低。<b>坏动作也不许一次性打死。</b></td></tr>
+  </tbody>
+</table>
+<div class="intuition">
+裁剪就像给方向盘加了<strong>限位器</strong>：你可以打方向，但一次最多打 20%。方向对（Â&gt;0）也别猛打死，方向错（Â&lt;0）也别猛回死。这样每次更新都待在"数据还可信"的安全区里，所以 PPO 能反复用同一批数据训好几轮（<code>mini_epochs=5</code>）而不崩。
+</div>
+
+<div class="viz">
+  <div class="viz-title">裁剪函数曲线（PPO 的标志性图）</div>
+  <div class="viz-sub">横轴是概率比 r，纵轴是每样本目标值。切换优势正负、拖动 ε，看裁剪如何"封顶/托底"。红色虚框是裁剪安全区。</div>
+  <canvas id="clipCanvas"></canvas>
+  <div class="controls" id="clipCtl"></div>
+  <div class="readout" id="clipOut"></div>
+</div>
+
+<h2 id="value">四、价值损失（也带裁剪）</h2>
+<p>Critic 要去拟合第 04 章算出的回报 $\hat R_t$。本项目同样对价值做了裁剪，防止 Critic 一步乱跳：</p>
+<div class="math-block">
+$$L^{V} = \max\!\Big[(V_\theta - \hat R)^2,\;\big(V_{\text{clip}} - \hat R\big)^2\Big],\quad
+V_{\text{clip}} = V_{\text{old}} + \clip\big(V_\theta - V_{\text{old}},\,-\epsilon,\,\epsilon\big).$$
+</div>
+<span class="code-cap">ppo.py · train_epoch</span>
+<pre><code class="lang-py">value_pred_clipped = value_preds + (values - value_preds).clamp(-self.e_clip, self.e_clip)
+value_losses = (values - returns) ** 2
+value_losses_clipped = (value_pred_clipped - returns) ** 2
+c_loss = torch.max(value_losses, value_losses_clipped)   # 取大 = 更保守的回归</code></pre>
+<p class="muted">这里取 <b>max</b>（而非策略目标的 min），因为价值是"损失要最小化"，取大同样起到"惩罚过激更新"的保守作用。</p>
+
+<h2 id="bounds">五、边界损失：把动作均值拉回合理范围</h2>
+<p>动作会被裁到 ±1，但若网络一味把 $\mu$ 推到很大（比如 5），会卡在边界、梯度消失。边界损失温柔地惩罚 $|\mu|>1.1$ 的部分：</p>
+<div class="math-block">
+$$L^{b} = \sum_i \Big[\big(\max(0,\;\mu_i-1.1)\big)^2 + \big(\max(0,\;-\mu_i-1.1)\big)^2\Big].$$
+</div>
+<p class="muted">在 $[-1.1,1.1]$ 内为 0（不干预），越界后二次增长。系数 <code>bounds_loss_coef=0.0001</code>，很轻。</p>
+
+<h2 id="total">六、总损失：四项合一</h2>
+<div class="math-block">
+$$L \;=\; \underbrace{L^{\text{actor}}}_{-L^{\text{CLIP}}}
+\;+\; \tfrac12\,c_v\,L^{V}
+\;-\; c_e\,\mathcal{H}
+\;+\; c_b\,L^{b}.$$
+</div>
+<span class="code-cap">ppo.py · train_epoch</span>
+<pre><code class="lang-py">loss = a_loss + 0.5 * c_loss * self.critic_coef \
+       - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef</code></pre>
+<div class="symtable">
+  <div class="symtitle">符号表 · 总损失各系数（本项目取值）</div>
+  <table>
+    <thead><tr><th>符号</th><th>代码</th><th>值</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$c_v$</td><td>critic_coef</td><td>4</td><td>价值损失权重（这里很大，强调 Critic 准确性）。</td></tr>
+      <tr><td class="sym-col">$c_e$</td><td>entropy_coef</td><td>0</td><td>熵奖励权重（本项目关闭，见第 03 章）。</td></tr>
+      <tr><td class="sym-col">$c_b$</td><td>bounds_loss_coef</td><td>1e-4</td><td>边界损失权重。</td></tr>
+      <tr><td class="sym-col">$\mathcal H$</td><td>entropy</td><td>—</td><td>策略熵；前面是<b>减号</b>，所以最小化总损失 = 鼓励高熵。</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>之后照常反向传播 + 梯度裁剪（<code>grad_norm=1.0</code>）+ Adam 更新。</p>
+
+<h2 id="kl-lr">七、KL 自适应学习率</h2>
+<p>除了裁剪，本项目还用第二道保险：<strong>监控新旧策略的 KL 散度，自动调学习率</strong>。两个对角高斯之间的 KL 有解析式，代码逐维计算：</p>
+<div class="math-block">
+$$D_{\mathrm{KL}}\big(\pi_{\text{old}} \,\|\, \pi_{\text{new}}\big)
+= \sum_i \Big[\underbrace{\log\tfrac{\sigma_{1,i}}{\sigma_{0,i}}}_{c_1}
++ \underbrace{\frac{\sigma_{0,i}^2 + (\mu_{1,i}-\mu_{0,i})^2}{2\,\sigma_{1,i}^2}}_{c_2}
+\underbrace{-\tfrac12}_{c_3}\Big].$$
+</div>
+<div class="symtable">
+  <div class="symtitle">符号表 · 高斯 KL</div>
+  <table>
+    <thead><tr><th>符号</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">$\mu_0,\sigma_0$</td><td>旧策略（采样时）的均值与标准差，代码 <code>p0_mu, p0_sigma</code>。</td></tr>
+      <tr><td class="sym-col">$\mu_1,\sigma_1$</td><td>新策略（更新后）的均值与标准差，代码 <code>p1_mu, p1_sigma</code>。</td></tr>
+      <tr><td class="sym-col">$c_1$</td><td>标准差比的对数项：两个分布"胖瘦"差异。</td></tr>
+      <tr><td class="sym-col">$c_2$</td><td>均值漂移 + 方差比项：分布"中心"挪了多少。</td></tr>
+      <tr><td class="sym-col">$c_3=-\tfrac12$</td><td>常数项，来自高斯 KL 的解析推导。</td></tr>
+    </tbody>
+  </table>
+</div>
+<span class="code-cap">ppo.py · policy_kl</span>
+<pre><code class="lang-py">c1 = torch.log(p1_sigma/p0_sigma + 1e-5)
+c2 = (p0_sigma ** 2 + (p1_mu - p0_mu) ** 2) / (2.0 * (p1_sigma ** 2 + 1e-5))
+c3 = -1.0 / 2.0
+kl = (c1 + c2 + c3).sum(dim=-1).mean()</code></pre>
+
+<p>算出 KL 后，<code>AdaptiveScheduler</code> 按一个简单规则调学习率（目标 KL <code>kl_threshold=0.02</code>）：</p>
+<div class="math-block">
+$$\text{lr} \leftarrow \begin{cases}
+\text{lr}/1.5, & D_{\mathrm{KL}} > 2\,\text{KL}^\star \quad(\text{改太猛，踩刹车})\\[4pt]
+\text{lr}\times 1.5, & D_{\mathrm{KL}} < 0.5\,\text{KL}^\star \quad(\text{改太怂，给油门})\\[4pt]
+\text{lr}, & \text{其它（刚刚好）}
+\end{cases}$$
+</div>
+<p class="muted">并夹在 $[10^{-6}, 10^{-2}]$。这让学习率随训练动态自调，比固定学习率稳健得多。</p>
+
+<div class="viz">
+  <div class="viz-title">KL → 学习率 自适应调度器（模拟器）</div>
+  <div class="viz-sub">设定每个 epoch 测到的 KL，点"前进一步"应用规则，观察学习率怎么被 ×1.5 / ÷1.5 地拉回。蓝带是目标区间 [0.5·KL*, 2·KL*]。</div>
+  <canvas id="lrCanvas"></canvas>
+  <div class="controls" id="lrCtl"></div>
+  <div class="readout" id="lrOut"></div>
+</div>
+
+<h2 id="loop">八、训练主循环</h2>
+<div class="timeline">
+  <div class="step"><h4>① 采样 play_steps</h4>用当前策略在上万个并行环境里跑 <code>horizon_length=8</code> 步，收集 (obs, action, reward, value, neglogp...)。</div>
+  <div class="step"><h4>② 算优势 computer_return</h4>反向递推 GAE（第 04 章），得到 advantages 与 returns，并标准化。</div>
+  <div class="step"><h4>③ 多轮 minibatch 更新 train_epoch</h4>把这批数据切成 minibatch，重复 <code>mini_epochs=5</code> 遍：算 ratio、裁剪目标、价值损失、反传、Adam。</div>
+  <div class="step"><h4>④ 调学习率</h4>每个 mini-epoch 末用平均 KL 更新学习率。</div>
+  <div class="step"><h4>⑤ 记录 / 存档</h4>写 TensorBoard，按 reward 存 best / last 检查点，回到 ①。</div>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">超参速查 · ppo_cfg.yaml</div>
+  <table>
+    <thead><tr><th>参数</th><th>值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>gamma</td><td>0.99</td><td>折扣因子</td></tr>
+      <tr><td>tau (λ)</td><td>0.95</td><td>GAE λ</td></tr>
+      <tr><td>e_clip</td><td>0.2</td><td>PPO 裁剪半径 ε</td></tr>
+      <tr><td>learning_rate</td><td>5e-3（自适应起点）</td><td>Adam 初始学习率</td></tr>
+      <tr><td>kl_threshold</td><td>0.02</td><td>目标 KL</td></tr>
+      <tr><td>horizon_length</td><td>8</td><td>每次采样步数</td></tr>
+      <tr><td>mini_epochs</td><td>5</td><td>每批数据复用轮数</td></tr>
+      <tr><td>critic_coef</td><td>4</td><td>价值损失权重</td></tr>
+      <tr><td>network.mlp</td><td>[512,256,128]</td><td>Actor-Critic 主干</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tip">
+<b>本章小结。</b> PPO = 策略梯度 + "裁剪剪刀"（限制每步幅度）+ 价值裁剪 + 边界损失 + KL 自适应学习率。这五件套让它能在上万并行环境里稳定、高效地把教师策略训出来。但教师用了仿真特权信息，真机没有——下一章 RMA 来解决这个鸿沟。
+</div>
+
+<div class="pager">
+  <a href="04-gae.html"><div class="dir">← 上一章</div><div class="ttl">04 · 广义优势估计 GAE</div></a>
+  <a class="next" href="06-rma-distillation.html"><div class="dir">下一章 →</div><div class="ttl">06 · RMA / ProprioAdapt 蒸馏</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 05 章</footer>
+
+<script>
+/* ---------- PPO 裁剪曲线 ---------- */
+(function () {
+  const cv = document.getElementById('clipCanvas');
+  const out = document.getElementById('clipOut');
+  let ctx, eps = 0.2, advPos = true;
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 50, y: 18, w: W-72, h: H-50 };
+    const rmin=0, rmax=2;
+    const A = advPos ? 1 : -1;
+    const ymin = advPos ? 0 : -2.4, ymax = advPos ? 2.4 : 0;
+    const X = r => box.x + map(r, rmin, rmax, 0, box.w);
+    const Y = y => box.y + box.h - map(y, ymin, ymax, 0, box.h);
+    Viz.gridlines(ctx, box, 4, 4);
+    // clip safe region shading
+    ctx.fillStyle = T.red; ctx.globalAlpha=0.06;
+    ctx.fillRect(X(1-eps), box.y, X(1+eps)-X(1-eps), box.h); ctx.globalAlpha=1;
+    ctx.strokeStyle=T.red; ctx.setLineDash([4,4]); ctx.lineWidth=1.2;
+    [1-eps, 1+eps].forEach(r=>{ ctx.beginPath(); ctx.moveTo(X(r),box.y); ctx.lineTo(X(r),box.y+box.h); ctx.stroke(); });
+    ctx.setLineDash([]);
+    // unclipped r*A (faint)
+    const u=[]; for(let i=0;i<=200;i++){ const r=rmin+(rmax-rmin)*i/200; u.push([X(r), Y(r*A)]); }
+    Viz.plot(ctx, u, T.faint, 1.5);
+    Viz.text(ctx, 'r·Â（未裁剪）', X(rmax)-4, Y(rmax*A)+ (advPos?-6:16), T.faint, '11px -apple-system','right');
+    // clipped objective: min(rA, clip(r)A) for A>0 ; for A<0 the min selects appropriately
+    const c=[]; for(let i=0;i<=200;i++){ const r=rmin+(rmax-rmin)*i/200; const cr=Math.min(Math.max(r,1-eps),1+eps); const val=Math.min(r*A, cr*A); c.push([X(r), Y(val)]); }
+    Viz.plot(ctx, c, advPos?T.green:T.orange, 3);
+    // axes
+    ctx.strokeStyle=T.faint; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(box.x, Y(0)); ctx.lineTo(box.x+box.w, Y(0)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(1), box.y); ctx.lineTo(X(1), box.y+box.h); ctx.stroke();
+    Viz.text(ctx, 'r=1', X(1)+3, box.y+box.h-4, T.faint, '11px monospace','left');
+    Viz.text(ctx, '概率比 r', box.x+box.w, Y(0)+(advPos?16:-6), T.faint, '12px -apple-system','right');
+    Viz.text(ctx, '目标 L', box.x-6, box.y+10, T.faint, '12px -apple-system','right');
+    out.innerHTML = advPos
+      ? `<b>Â &gt; 0（好动作）。</b> r 超过 1+ε=<b>${(1+eps).toFixed(2)}</b> 后曲线变平——目标被<b>封顶</b>，没动力再把概率推高，防止一次吹太猛。`
+      : `<b>Â &lt; 0（坏动作）。</b> r 低于 1−ε=<b>${(1-eps).toFixed(2)}</b> 后曲线变平——目标被<b>托底</b>，没动力再把概率压更低，防止一次打太死。`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 260); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('clipCtl');
+  Viz.slider(ctl, { label:'裁剪半径 ε', min:0.05, max:0.5, value:0.2, oninput:v=>{eps=v;draw();} });
+  Viz.button(ctl, '切换 优势正/负', ()=>{ advPos=!advPos; draw(); });
+})();
+
+/* ---------- KL → LR 调度器 ---------- */
+(function () {
+  const cv = document.getElementById('lrCanvas');
+  const out = document.getElementById('lrOut');
+  let ctx, lr = 5e-3, klStar = 0.02, klMeas = 0.02, hist = [5e-3];
+  const MINLR=1e-6, MAXLR=1e-2;
+  function stepOnce() {
+    if (klMeas > 2*klStar) lr = Math.max(lr/1.5, MINLR);
+    else if (klMeas < 0.5*klStar) lr = Math.min(lr*1.5, MAXLR);
+    hist.push(lr); if (hist.length>40) hist.shift(); draw();
+  }
+  function draw() {
+    const T = Viz.theme();
+    const W = cv._cssW, H = cv._cssH;
+    ctx.clearRect(0,0,W,H);
+    const box = { x: 56, y: 16, w: W-76, h: H-44 };
+    // log-scale lr
+    const lo=Math.log10(MINLR), hi=Math.log10(MAXLR);
+    const Y = v => box.y + box.h - map(Math.log10(v), lo, hi, 0, box.h);
+    Viz.gridlines(ctx, box, 5, 4);
+    // y ticks (powers of 10)
+    for (let p=-6;p<=-2;p++){ Viz.text(ctx, '1e'+p, box.x-6, Y(Math.pow(10,p))+4, T.faint, '10px monospace','right'); }
+    const X = i => box.x + (hist.length<=1?0: i/(Math.max(1,hist.length-1))*box.w);
+    const pts = hist.map((v,i)=>[X(i), Y(v)]);
+    Viz.plot(ctx, pts, T.accent, 2.5);
+    pts.forEach(p=>Viz.dot(ctx,p[0],p[1],2.5,T.accent));
+    if (pts.length) Viz.dot(ctx, pts[pts.length-1][0], pts[pts.length-1][1], 5, T.red);
+    Viz.text(ctx, '学习率 (log)', box.x-6, box.y+10, T.faint, '11px -apple-system','right');
+    Viz.text(ctx, 'epoch →', box.x+box.w, box.y+box.h+15, T.faint, '11px -apple-system','right');
+    const state = klMeas>2*klStar ? '过大 → 下次 ÷1.5（踩刹车）' : (klMeas<0.5*klStar ? '过小 → 下次 ×1.5（给油门）' : '在目标区间 → 保持不变');
+    out.innerHTML = `当前 lr = <b>${lr.toExponential(2)}</b>；测得 KL = <b>${klMeas.toFixed(4)}</b>，目标 KL* = ${klStar}。判定：<b>${state}</b>。`;
+  }
+  function init(){ ctx = Viz.setupCanvas(cv, null, 220); draw(); }
+  Viz.onRedraw(init);
+  const ctl = document.getElementById('lrCtl');
+  Viz.slider(ctl, { label:'本 epoch 测得 KL', min:0, max:0.1, value:0.02, step:0.001, fmt:v=>(+v).toFixed(3), oninput:v=>{klMeas=v;draw();} });
+  Viz.button(ctl, '前进一步（应用规则）', stepOnce);
+  Viz.button(ctl, '重置', ()=>{ lr=5e-3; hist=[5e-3]; draw(); }, true);
+})();
+</script>
+</body>
+</html>

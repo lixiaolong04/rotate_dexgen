@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>18 · 抓取缓存 gen_grasp</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/mathjax-config.js"></script>
+<script defer src="assets/mathjax/tex-mml-svg.js"></script>
+<script src="assets/viz.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html">灵巧手 RL 课程</a>
+  <a href="index.html">← 首页</a>
+  <span class="spacer"></span>
+  <span class="pill">第 18 章 · 抓取缓存</span>
+</nav>
+
+<div class="doc-head">
+  <div class="kicker">CHAPTER 18 · 训练前置步骤</div>
+  <h1>抓取缓存与 gen_grasp</h1>
+  <p class="sub">训练旋转任务前，必须先有一批「已经稳稳抓住圆柱体」的起手姿态。本章讲 <code>gen_grasp.py</code> 如何用专用 Grasp 环境自动收集这些姿态，存成 <code>.npy</code>（像 Excel 一张表），以及训练环境 <code>_reset_idx</code> 如何从中采样——含 cond1/cond2/cond3 具体数字举例。</p>
+</div>
+
+<div class="layout">
+<div class="content wrap">
+
+<div class="note">
+<b>为什么需要抓取缓存？</b> 旋转 RL 的 episode 从「手已经握住物体」开始。若每次 reset 都从张开的手 + 空中落下的物体起步，策略要花大量步数学「先抓住」——而这不是旋转任务的目标。预先生成几千个经过物理验证的抓取姿态，训练时直接采样，可让策略专注学「怎么转」。</div>
+
+<div class="glossary">
+  <h4>📖 本章术语速查</h4>
+  <dl>
+    <dt>Grasp 环境</dt>
+    <dd>专门用来「筛成功握姿」的 Gym 任务，奖励恒为 0，不做 RL 训练。继承 Rotate 环境，只改成功判定和 reset。</dd>
+    <dt>Rotate 环境</dt>
+    <dd>正式训练 in-hand rotation 的环境，reset 时从缓存抽样起手式。</dd>
+    <dt>.npy 文件</dt>
+    <dd>NumPy 的二进制数组格式。本项目里是一张「行=姿态、列=28 个数」的表，用 <code>np.load</code> 读取。</dd>
+    <dt>scale bucket（尺寸桶）</dt>
+    <dd>圆柱直径 0.4–0.6 m 之间均匀 8 档；每档单独攒 6250 条姿态，最后纵向拼成 50000 行。</dd>
+    <dt>cond1 / cond2 / cond3</dt>
+    <dd>Grasp 环境每步检查的三个「握住了吗」条件；任一失败立刻 reset 重试。</dd>
+    <dt>zero_actions</dt>
+    <dd>全零动作向量：不主动下指令，只靠 PD 保持当前目标，让手和物体在重力下自然合拢。</dd>
+    <dt>episode_length</dt>
+    <dd>本局已走的控制步数。Grasp 里要撑满 399 步（20 s）且全程 cond 成立，才记入缓存。</dd>
+  </dl>
+</div>
+
+<h2 id="excel-analogy">零、把 .npy 想成 Excel 表</h2>
+<div class="intuition">
+没用过 NumPy 的同学，可以把 <code>cache/xhand_grasp_linspace_0.4-0.6-8.npy</code> 想象成一张 Excel：
+
+<ul>
+  <li><strong>行</strong> = 一种「已成功抓住」的起手姿势（共约 50000 行）</li>
+  <li><strong>列</strong> = 28 列数字：前 21 列手指关节角，22–24 列物体 xyz，25–28 列物体四元数</li>
+  <li><strong>工作表分页</strong> = 8 个 scale bucket 纵向拼在一起：第 1–6250 行是细笔，6251–12500 是稍粗……</li>
+  <li><strong>训练 reset</strong> = 在对应分页里随机挑一行，照抄 28 个数到仿真里</li>
+</ul>
+<code>np.load(...)</code> 就像 <code>pd.read_csv</code> 一次性把整张表读进内存；<code>torch.from_numpy</code> 再拷到 GPU 上供并行 env 索引。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">Excel 类比 ↔ 代码</div>
+  <table>
+    <thead><tr><th>Excel 概念</th><th>代码对应</th><th>本项目典型值</th></tr></thead>
+    <tbody>
+      <tr><td>总行数</td><td><code>d.shape[0]</code></td><td>50000 (= 8 × 6250)</td></tr>
+      <tr><td>总列数</td><td><code>d.shape[1]</code></td><td>28</td></tr>
+      <tr><td>第 42 行</td><td><code>saved_grasping_states[41]</code>（0-based）</td><td>某一整套手+物体位姿</td></tr>
+      <tr><td>A–U 列（21 列）</td><td><code>[:, 0:21]</code></td><td>关节角 (rad)</td></tr>
+      <tr><td>V–X 列</td><td><code>[:, 21:24]</code></td><td>物体位置 (m)</td></tr>
+      <tr><td>Y–AB 列</td><td><code>[:, 24:28]</code></td><td>物体四元数 (w,x,y,z)</td></tr>
+      <tr><td>按尺寸分 sheet</td><td><code>bucket_grasp = 总行数 / 8</code></td><td>每 sheet 6250 行</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ask-box">
+  <b>Q：为什么不直接存 CSV？</b><br>
+  A：50000×28 的 float32 表 CSV 约几十 MB 且读写慢；<code>.npy</code> 二进制紧凑、<code>np.load</code> 一行代码，和 PyTorch 互转方便。你仍可用 <code>python -c "import numpy as np; print(np.load(...)[0])"</code> 窥一眼某行。
+</div>
+
+<h2 id="two-env">一、两个环境：Grasp vs Rotate</h2>
+<div class="intuition">
+同一个 Xhand 手、同一根圆柱，但<strong>两个不同的 Gym 任务</strong>：<strong>Grasp</strong> 像「摄影师」——只负责拍几千张「握好了」的定格照存进相册；<strong>Rotate</strong> 像「杂技演员」——每次上台从相册抽一张照摆好姿势，然后学怎么转笔。
+</div>
+
+<div class="symtable">
+  <div class="symtitle">任务注册对照</div>
+  <table>
+    <thead><tr><th>用途</th><th>Gym ID</th><th>环境类</th><th>配置文件</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">收集抓取缓存</td><td><code>Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0</code></td><td><code>XhandWaveInhandRotateGraspEnv</code></td><td><code>xhand_wave_grasp_env_cfg.py</code></td></tr>
+      <tr><td class="sym-col">训练 / 部署</td><td><code>Isaac-Inhand-Rotate-Xhand-Wave-v0</code></td><td><code>XhandWaveInhandRotateEnv</code></td><td><code>xhand_wave_env_cfg.py</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Grasp 环境在 <code>__init__.py</code> 中单独注册：</p>
+<span class="code-cap">tasks/inhand_rotate/__init__.py</span>
+<pre><code class="lang-py">gym.register(
+    id="Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0",
+    entry_point="rl_isaaclab.tasks.inhand_rotate.xhand_wave_grasp_env:XhandWaveInhandRotateGraspEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.xhand_wave_grasp_env_cfg:XhandWaveEnvCfg",
+        ...
+    },
+)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 两个环境分工</div>
+  <table>
+    <tbody>
+      <tr><td>Grasp 环境</td><td>跑在 <code>gen_grasp.py</code> 里，一次性任务，填满缓存就 <code>exit()</code>。</td></tr>
+      <tr><td>Rotate 环境</td><td>跑在 <code>train.py</code> 里，反复 reset + 学旋转，依赖 Grasp 产出的 .npy。</td></tr>
+      <tr><td>继承关系</td><td>Grasp <strong>继承</strong> Rotate，复用场景搭建、PD 控制、传感器——只 override 奖励和 reset。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="reward-zero">1. 奖励恒为 0</h3>
+<p>Rotate 环境的 <code>_get_rewards()</code> 计算角速度奖励、线速度惩罚、力矩惩罚等（见<a href="17-obs-reward-code.html">第 17 章</a>）。Grasp 环境<strong>完全覆盖</strong>此方法，始终返回 0——这里不做 RL 训练，只筛「哪些姿态算成功抓住」。</p>
+<span class="code-cap">xhand_wave_grasp_env.py · _get_rewards 末尾</span>
+<pre><code class="lang-py">        if self.common_step_counter % 40 == 0:
+            self.physics_sim_view.set_gravity(self.gravity_all_directions[self.gravity_id])
+            self.gravity_id += 1
+            self.gravity_id %= len(self.gravity_all_directions)
+        return 0   # Grasp 环境不训练策略，奖励恒为 0</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 奖励为 0 但仍每步 step</div>
+  <table>
+    <tbody>
+      <tr><td>return 0</td><td>PPO 不连上来——没有 loss、没有梯度。脚本只是 <code>while True: env.step(zero)</code>。</td></tr>
+      <tr><td>每 40 步换重力</td><td>六向重力轮换，让同一姿势在 ±X/±Y/±Z 下都试过，相册里的行更「耐造」。</td></tr>
+      <tr><td>副作用：仍跑 cond 判定</td><td>虽然奖励为 0，<code>_get_rewards</code> 里每步仍算 cond1/2/3，失败就 reset。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="success-cond">2. 成功条件 cond1 / cond2 / cond3（含具体数字）</h3>
+<p>每步检查三个条件，<strong>全部满足</strong>才算「这一拍握住了」。任一不满足则 <code>reset_buf = 1</code>，该 env 立刻重开。要连续 399 拍都成立，episode 结束才把 28 维写入缓存。</p>
+
+<div class="symtable">
+  <div class="symtitle">三个成功条件（阈值 + 数字举例）</div>
+  <table>
+    <thead><tr><th>代号</th><th>判定式</th><th>通过举例</th><th>失败举例</th><th>直觉</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="sym-col"><strong>cond1</strong><br>指尖距离</td>
+        <td>5 指到物体中心距离均 &lt; <strong>0.1 m</strong> (10 cm)</td>
+        <td>拇指 0.062 m，食指 0.071 m，…，小指 0.088 m（都 &lt; 0.1）</td>
+        <td>无名指 0.112 m → 哪怕其它四指都近，<strong>全体失败</strong></td>
+        <td>五指围拢到物体附近，不是空手比划</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>cond2</strong><br>接触力</td>
+        <td>10 个接触传感器中 ≥ <strong>3 个</strong> 法向力 &gt; <strong>0.5 N</strong></td>
+        <td>传感器力 [0.8, 1.2, 0.6, 0.1, …] → 3 个 &gt;0.5，通过</td>
+        <td>只有 2 个指 &gt;0.5 N（其余 0.2 N）→ 算「靠近但没握紧」</td>
+        <td>要真在推物体，不是轻轻蹭到</td>
+      </tr>
+      <tr>
+        <td class="sym-col"><strong>cond3</strong><br>姿态稳定</td>
+        <td>物体相对默认姿态旋转角 &lt; <strong>30°</strong> ($\pi/6$)</td>
+        <td>相对默认只偏了 12° → 通过</td>
+        <td>物体翻滚了 45° → 握姿不可复现，丢弃</td>
+        <td>物体没有大幅翻滚，pose 可写入相册复用</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="intuition">
+<b>一步仿真快照：</b> 某 env 在 step 200：五指距离 [0.07, 0.08, 0.06, 0.09, 0.05] m → cond1 ✓。10 路力传感器范数 [1.1, 0.9, 0.7, 0.3, 0.2, 0.1, 0.4, 0.1, 0.0, 0.0] N → 前三个 &gt;0.5，共 3 个 → cond2 ✓。物体相对默认转 8° → cond3 ✓。三条件都过，这一拍不算 reset；若下一步小指滑到 0.11 m → cond1 ✗ → 立刻 reset，本局前 200 步白跑。
+</div>
+
+<span class="code-cap">xhand_wave_grasp_env.py · 成功判定核心</span>
+<pre><code class="lang-py">finger_dist = torch.norm(self.fingertip_pos - self.object_pos.unsqueeze(1), dim=-1, p=2)
+cond1 = (finger_dist &lt; 0.1).all(-1)          # 5 指全部 &lt; 10 cm
+
+filtered_force_matrix = torch.cat([
+    self._contact_sensor[id].data.force_matrix_w[:, 0, 0, :].unsqueeze(1)
+    for id in range(10)
+], dim=1)
+finger_force = torch.norm(filtered_force_matrix, dim=-1, p=2)
+cond2 = (finger_force &gt; 0.5).sum(-1) &gt;= 3    # 至少 3 个传感器 &gt; 0.5 N
+
+cond3 = torch.less(
+    quat_to_rot(quat_mul(self.object_rot, quat_conjugate(self.object.data.default_root_state.clone()[:, 3:7]))),
+    self.cfg.reset_angle_diff,               # 默认 30° = π/6
+)
+cond = cond1.float() * cond2.float() * cond3.float()
+self.reset_buf[cond &lt; 1] = 1                 # 任一失败 → 立刻 reset</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · cond 判定（逐行）</div>
+  <table>
+    <tbody>
+      <tr><td>finger_dist shape (N, 5)</td><td>每个并行 env 的 5 根指尖，各算到物体中心的欧氏距离 (m)。</td></tr>
+      <tr><td>(dist &lt; 0.1).all(-1)</td><td><strong>all</strong>：5 个都要 &lt;10 cm，有一个 10.1 cm 就挂。</td></tr>
+      <tr><td>10 个 contact_sensor</td><td>比 Rotate 训练用的 5 个多——Grasp 用更密的力矩阵判「至少 3 点用力」。</td></tr>
+      <tr><td>(force &gt; 0.5).sum(-1) &gt;= 3</td><td>数有几个传感器 &gt;0.5 N；2 个不够，3 个够。</td></tr>
+      <tr><td>quat_to_rot(...) &lt; 30°</td><td>物体姿态相对 spawn 默认姿态偏了多少度；翻太大不要。</td></tr>
+      <tr><td>cond = c1 * c2 * c3</td><td>三个都 1 才乘出 1；任何一个 0 就失败。</td></tr>
+      <tr><td>reset_buf[cond &lt; 1] = 1</td><td>失败的 env 标记要 reset——不等同于训练里的 height_reset，是 Grasp 专用早停。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>脚本每 100 步打印失败统计，方便调参时看哪个条件卡得最狠：</p>
+<pre><code>[Fail Stats] steps=100 | cond1_fail=4200(42.0%) | cond2_fail=3100(31.0%) | cond3_fail=800(8.0%) | total_reset=6500(65.0%) | total_success=3500(35.0%)
+[Dbg] per-finger avg dist to obj (thumb, index, mid, ring, pinky): [0.082, 0.091, 0.078, 0.095, 0.102] m  (cond1 needs all &lt; 0.100)
+[Dbg] per-finger avg contact force: [0.62, 0.55, 0.48, 0.31, 0.22] N  (cond2 needs ≥3 fingers &gt; 0.500)</code></pre>
+
+<div class="intuition">
+读日志：<code>pinky avg dist 0.102</code> 刚好超 0.1 → cond1 是常见瓶颈；<code>ring 0.31 N</code> 不够 0.5 → cond2 也紧。调参方向包括：默认手型更包拢、物体尺度、PD 刚度——但别轻易放宽阈值，否则相册里全是「假抓」。
+</div>
+
+<div class="ask-box">
+  <b>Q：为什么要撑满 399 步才写入？瞬时不就行了吗？</b><br>
+  A：瞬时满足 cond 可能是运气；连续 20 s（399 控制步）在六向重力轮换下都稳住，说明这个 pose 真的耐折腾。这是用仿真时间换缓存质量。
+</div>
+
+<h3 id="gravity">3. 六向重力轮换</h3>
+<p>Grasp 环境在 <code>__init__</code> 里定义 6 个重力方向（±X、±Y、±Z），每 40 个仿真步切换一次。目的是让收集到的抓取姿态在不同重力朝向下都经受过考验，提高 sim-to-real 鲁棒性。</p>
+<span class="code-cap">xhand_wave_grasp_env.py · gravity_all_directions</span>
+<pre><code class="lang-py">self.gravity_all_directions = [
+    carb.Float3(0.0,  0.0,  9.81),   # +Z 物体往下掉（相对手）
+    carb.Float3(0.0,  0.0, -9.81),   # -Z（常规地球重力）
+    carb.Float3(0.0,  9.81, 0.0),    # +Y
+    carb.Float3(0.0, -9.81, 0.0),    # -Y
+    carb.Float3(9.81,  0.0, 0.0),    # +X
+    carb.Float3(-9.81, 0.0, 0.0),    # -X
+]</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 六向重力</div>
+  <table>
+    <tbody>
+      <tr><td>每 40 control step 换一次</td><td>399 步里大约换 10 次方向——同一局里物体「从不同方向拽手」。</td></tr>
+      <tr><td>±9.81 m/s²</td><td>比训练初期 −0.05 的重力课程猛得多；Grasp 阶段就要硬扛地球重力。</td></tr>
+      <tr><td>写入缓存的是「全程存活」的 pose</td><td>能通过 399 步 + 六向重力的人，才配进 Excel 表。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="npy-format">二、.npy 文件格式与命名</h2>
+
+<h3 id="row-layout">1. 每行 28 维（Excel 一行长什么样）</h3>
+<p>每条缓存记录是一个「已成功抓住」瞬间的完整状态。举例<strong>第 0 行</strong>（细圆柱 bucket 里的一条）：</p>
+
+<div class="symtable">
+  <div class="symtitle">示例行：d[0, :] 各列含义</div>
+  <table>
+    <thead><tr><th>列</th><th>字段</th><th>示例值</th><th>单位</th></tr></thead>
+    <tbody>
+      <tr><td>0–3</td><td>拇指 4 关节角</td><td>[0.52, −0.31, 0.88, 0.15]</td><td>rad</td></tr>
+      <tr><td>4–7</td><td>食指 4 关节</td><td>[0.61, 0.12, 0.95, 0.40]</td><td>rad</td></tr>
+      <tr><td>…</td><td>中/无/掌根/小指</td><td>…</td><td>rad</td></tr>
+      <tr><td>21–23</td><td>物体位置 xyz</td><td>[0.02, −0.01, 0.618]</td><td>m（相对 env 原点）</td></tr>
+      <tr><td>24–27</td><td>物体四元数 wxyz</td><td>[0.998, 0.01, −0.02, 0.05]</td><td>无量纲</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="symtable">
+  <div class="symtitle">单行字段布局（shape = 28）</div>
+  <table>
+    <thead><tr><th>列范围</th><th>维数</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td class="sym-col">[0 : 21)</td><td>21</td><td>手部关节角 <code>hand_dof_pos</code>（Xhand 21 DOF）</td></tr>
+      <tr><td class="sym-col">[21 : 24)</td><td>3</td><td>物体位置 <code>object_pos</code>（相对 env 原点）</td></tr>
+      <tr><td class="sym-col">[24 : 28)</td><td>4</td><td>物体四元数 <code>object_rot</code>（w, x, y, z）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<span class="code-cap">xhand_wave_grasp_env.py · 状态维度定义</span>
+<pre><code class="lang-py"># Each row: num_hand_dofs joint_pos + 3 object_pos + 4 object_quat
+self._grasp_state_dim = self.num_hand_dofs + 7   # 21 + 7 = 28</code></pre>
+
+<p>保存时拼接所有 scale bucket 的数据：</p>
+<span class="code-cap">xhand_wave_grasp_env.py · 写入 .npy</span>
+<pre><code class="lang-py">name = f'cache/xhand_grasp_linspace_{self.cfg.scale_range[0]}-{self.cfg.scale_range[1]}-{self.cfg.scale_range[2]}.npy'
+np.save(name, save_data.cpu().numpy())</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 写入磁盘</div>
+  <table>
+    <tbody>
+      <tr><td>8 个 bucket 纵向 cat</td><td>像把 8 张 Excel sheet 复制粘贴成一张长表，50000 行。</td></tr>
+      <tr><td>os.makedirs('cache')</td><td>没有 cache 目录就建一个。</td></tr>
+      <tr><td>np.save</td><td>整张 float32 表一次性落盘；训练时 <code>np.load</code> 读回。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="bucket-naming">2. 文件名与 scale bucket</h3>
+<p>配置里 <code>scale_range = [0.4, 0.6, 8]</code> 表示圆柱体直径在 0.4–0.6 m 之间均匀取 8 个尺寸。对应文件名：</p>
+<pre><code>cache/xhand_grasp_linspace_0.4-0.6-8.npy</code></pre>
+
+<div class="symtable">
+  <div class="symtitle">8 个 bucket 行号区间（0-based）</div>
+  <table>
+    <thead><tr><th>bucket</th><th>圆柱直径 (约)</th><th>行号区间</th><th>行数</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>0.40 m（最细）</td><td>0 – 6249</td><td>6250</td></tr>
+      <tr><td>1</td><td>0.429 m</td><td>6250 – 12499</td><td>6250</td></tr>
+      <tr><td>2</td><td>0.457 m</td><td>12500 – 18749</td><td>6250</td></tr>
+      <tr><td>…</td><td>…</td><td>…</td><td>6250</td></tr>
+      <tr><td>7</td><td>0.60 m（最粗）</td><td>43750 – 49999</td><td>6250</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>训练环境加载时用相同规则拼接路径：</p>
+<span class="code-cap">xhand_wave_env_cfg.py · 训练侧</span>
+<pre><code class="lang-py">grasp_cache_path = 'cache/xhand_grasp_linspace'  # 不含后缀</code></pre>
+<span class="code-cap">xhand_wave_env.py · 加载</span>
+<pre><code class="lang-py">self.saved_grasping_states = torch.from_numpy(
+    np.load(f"{self.cfg.grasp_cache_path}_{self.cfg.scale_range[0]}-{self.cfg.scale_range[1]}-{self.cfg.scale_range[2]}.npy")
+).float().to(self.device)
+self.bucket_grasp = int(self.saved_grasping_states.shape[0] / self.cfg.scale_range[2])
+self.bucket_env  = int(self.num_envs / self.cfg.scale_range[2])</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 训练侧加载</div>
+  <table>
+    <tbody>
+      <tr><td>文件名拼接规则</td><td>path 前缀 + <code>_0.4-0.6-8.npy</code>，和 gen_grasp 保存时完全一致。</td></tr>
+      <tr><td>bucket_grasp = 50000/8</td><td>抽样时在第 i 个 bucket 的 6250 行里 <code>randint</code>。</td></tr>
+      <tr><td>scale_ids 对齐</td><td>env #0–9 用 bucket 0 的行，env #10–19 用 bucket 1……物体粗细和相册分页一致。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tip">
+<b>改了 scale_range 必须重跑 gen_grasp。</b> 配置注释已写明：<code>scale_range = [0.4, 0.6, 8]</code> 变更后，旧缓存的尺寸分布对不上，必须重新生成。</div>
+
+<h2 id="gen-grasp">三、gen_grasp.py：无限循环收集</h2>
+<p>入口脚本极其精简——创建 Grasp 环境，发零动作，永远 step，直到缓存填满后环境内部 <code>exit()</code>。</p>
+
+<span class="code-cap">scripts/gen_grasp.py · 主循环</span>
+<pre><code class="lang-py">env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+env = GymStyleEnvWrapper(env, clip_actions=env_cfg.clip_actions)
+
+env.reset()
+while True:
+    actions = env.zero_actions()   # 全零动作：手保持当前 PD 目标
+    _ = env.step(actions)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · gen_grasp 主循环</div>
+  <table>
+    <tbody>
+      <tr><td>gym.make(Grasp 任务)</td><td>启动「摄影师」环境，不是训练任务。</td></tr>
+      <tr><td>zero_actions()</td><td>21 维全 0 → 增量动作不改动目标 → 手维持当前姿势，靠重力让物体滚进掌心。</td></tr>
+      <tr><td>while True</td><td>没有 tqdm 进度条——看终端打印的 <code>current cache size</code> 知道进度。</td></tr>
+      <tr><td>环境内 exit()</td><td>8 个 bucket 都满 6250 行后保存 .npy 并强制退出进程。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>典型启动命令（RTX 5070 Ti 12GB 建议从小 env 数试起）：</p>
+<pre><code>conda activate env_isaaclab
+cd /media/user/Data/Robotera/era_dexhand_lab
+export CUDA_VISIBLE_DEVICES=0
+
+python rl_isaaclab/scripts/gen_grasp.py \
+  --task Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0 --headless</code></pre>
+
+<h3 id="collect-logic">收集逻辑（Grasp 环境的 _reset_idx）</h3>
+<p>Grasp 环境<strong>覆盖</strong>了父类 <code>_reset_idx</code>，不走缓存采样，而是：</p>
+<ol>
+  <li>手从默认姿态 + 小随机扰动起步，物体从默认位置落下；</li>
+  <li>零动作下靠 PD 控制器和重力让手「自然」合拢；</li>
+  <li>若某 env 存活到 <code>episode_length == max_episode_length - 1</code>（399 步，且全程 cond1∧cond2∧cond3），把该瞬间的 28 维状态写入对应 scale bucket；</li>
+  <li>每个 bucket 攒满 <code>5e4 // scale_num = 6250</code> 条后标记完成；</li>
+  <li>8 个 bucket 全部完成 → 合并写入 <code>.npy</code> → <code>exit()</code>。</li>
+</ol>
+
+<span class="code-cap">xhand_wave_grasp_env.py · 成功样本写入 bucket</span>
+<pre><code class="lang-py">success = self.episode_length_buf == self.max_episode_length - 1
+all_states = torch.cat([self.hand_dof_pos, self.object_pos, self.object_rot], dim=1)[success]
+saved_scale_ids = self.scale_ids[success]
+
+for id, saved_scale_id in enumerate(saved_scale_ids):
+    cap = int(5e4 // self.cfg.scale_range[2])   # 每 bucket 上限 6250
+    if self.saved_grasping_states[saved_scale_id].shape[0] &lt; cap:
+        self.saved_grasping_states[saved_scale_id] = torch.cat([
+            self.saved_grasping_states[saved_scale_id],
+            all_states[id].reshape(-1, self._grasp_state_dim)
+        ], dim=0)
+
+# 所有 bucket 满 → 保存并退出
+if finish_scale == self.cfg.scale_range[2]:
+    np.save(name, save_data.cpu().numpy())
+    exit()</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 写入 bucket</div>
+  <table>
+    <tbody>
+      <tr><td>success = ep_len == 399</td><td>只有「撑满一整局且从未被 cond 打掉」的 env 才算成功。</td></tr>
+      <tr><td>all_states 28 维</td><td>cat 关节+物体位姿，就是 Excel 一行。</td></tr>
+      <tr><td>saved_scale_id</td><td>这个 env 负责哪种直径的圆柱，就 append 到哪个 bucket 列表。</td></tr>
+      <tr><td>cap = 6250</td><td>每个尺寸最多 6250 行，8×6250=50000 总行数。</td></tr>
+      <tr><td>finish_scale == 8 → exit</td><td>任务完成，进程退出；你可以去跑 train.py 了。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>运行中会周期性打印进度：</p>
+<pre><code>[2026-06-05 12:34:56] current cache size: 31250, finished: 4
+...
+done!</code></pre>
+
+<div class="intuition">
+<code>finished: 4</code> 表示 8 个尺寸里已有 4 个 bucket 攒满 6250 行；<code>cache size: 31250</code> 是总行数（含未满的 bucket）。一般 5–15 分钟量级，取决于 <code>num_envs</code> 和 GPU。
+</div>
+
+<h2 id="reset-sample">四、训练环境 _reset_idx 从缓存采样</h2>
+<p>Rotate 环境（正式训练）的 <code>grasp_cache_path</code> 非空时，reset 不再随机撒物体，而是从 <code>.npy</code> 随机抽一行，恢复手关节角和物体位姿。</p>
+
+<div class="intuition">
+把缓存想成一本「成功抓笔姿势相册」。每次有 env 需要 reset，就翻到对应尺寸（scale bucket）的某一页，照抄 28 个数。例如 env #3 分到最细圆柱（bucket 0），可能在第 42 行抽到一张「拇指弯 0.52 rad、物体 z=0.618 m」的定格照。
+</div>
+
+<span class="code-cap">xhand_wave_env.py · 按 bucket 随机采样</span>
+<pre><code class="lang-py"># pose cache
+sampled_pose_idx = torch.randint(0, self.bucket_grasp, size=(self.bucket_env,))
+saved_grasping_states_picked = torch.zeros((self.num_envs, self.num_hand_dofs + 7), device=self.device)
+for i in range(self.cfg.scale_range[2]):
+    saved_grasping_states_picked[i*self.bucket_env:(i+1)*self.bucket_env] = \
+        self.saved_grasping_states[i*self.bucket_grasp:(i+1)*self.bucket_grasp][sampled_pose_idx]
+
+sampled_pose = saved_grasping_states_picked[env_ids].clone()
+
+# 用 sampled_pose 写回仿真
+object_default_state[:, 0:3] = sampled_pose[:, 21:24] + self.scene.env_origins[env_ids]
+object_default_state[:, 3:7] = sampled_pose[:, 24:28]
+dof_pos = sampled_pose[:, :21]
+self.hand.write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)</code></pre>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 训练 reset 抽样（带数字）</div>
+  <table>
+    <tbody>
+      <tr><td>num_envs=80, bucket_env=10</td><td>每个尺寸 10 个并行 env；一次 reset 抽 10 个随机行号。</td></tr>
+      <tr><td>sampled_pose_idx = [42, 1088, 3, …]</td><td>长度 10；bucket 0 的 env 用第 42 行，bucket 1 用 1088 行……</td></tr>
+      <tr><td>sampled_pose[env_ids]</td><td>只对刚 done 的 env 操作；其它 env 继续转笔。</td></tr>
+      <tr><td>物体位置 + env_origins</td><td>缓存里是局部坐标；写回仿真要加网格偏移，物体才出现在正确世界位置。</td></tr>
+      <tr><td>dof_pos 写回 hand</td><td>21 个关节角瞬间设为相册里的值——开局就是「已抓住」。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>注意两个约束：</p>
+<ul>
+  <li><code>num_envs</code> 必须能被 <code>scale_range[2]</code>（bucket 数 8）整除，否则启动时报错退出；</li>
+  <li>若 <code>grasp_cache_path = None</code> 或文件缺失，训练 reset 会 <code>raise RuntimeError("No saved grasping states found")</code>。</li>
+</ul>
+
+<div class="ask-box">
+  <b>Q：训练时 height_reset 很频繁，是缓存坏了吗？</b><br>
+  A：不一定。常见原因：① 缓存与当前 <code>scale_range</code> 不匹配（改了 cfg 没重跑 gen_grasp）；② 训练初期重力虽轻但策略乱动把笔弄掉；③ 高度窗 4 cm 太窄。先看 TensorBoard <code>height_reset_*</code>，再用 tryit 检查 .npy 是否存在且 shape 为 (50000, 28)。
+</div>
+
+<h2 id="pipeline">五、完整流程串联</h2>
+<div class="timeline">
+  <div class="step"><h4>① 配置 scale_range</h4><p><code>xhand_wave_grasp_env_cfg.py</code> 与 <code>xhand_wave_env_cfg.py</code> 保持一致</p></div>
+  <div class="step"><h4>② 运行 gen_grasp</h4><p>零动作 + 六向重力 → 筛选 cond1∧2∧3 → 写 <code>cache/xhand_grasp_linspace_*.npy</code></p></div>
+  <div class="step"><h4>③ 训练 train.py</h4><p>Rotate 环境加载缓存，<code>_reset_idx</code> 采样起手姿态，策略学旋转</p></div>
+</div>
+
+<p><code>train.py</code> 支持 <code>--cache</code> 覆盖默认路径：</p>
+<pre><code>python rl_isaaclab/scripts/train.py \
+  --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless --num_envs 10 \
+  --cache cache/xhand_grasp_linspace</code></pre>
+
+<h2 id="troubleshoot">六、gen_grasp 排错指南</h2>
+<div class="symtable">
+  <div class="symtitle">终端现象 → 原因 → 处理</div>
+  <table>
+    <thead><tr><th>现象</th><th>可能原因</th><th>建议</th></tr></thead>
+    <tbody>
+      <tr><td>cond1_fail 常年 &gt;40%</td><td>小指/无名指距离 &gt;0.1 m</td><td>看 <code>[Dbg] per-finger avg dist</code>；检查默认手型、物体初始高度</td></tr>
+      <tr><td>cond2_fail 常年 &gt;30%</td><td>接触力 &lt;0.5 N 的指太多</td><td>物体 scale 与手尺寸不匹配；或 PD 太软握不紧</td></tr>
+      <tr><td>cond3_fail 突增</td><td>六向重力切换时物体翻滚 &gt;30°</td><td>正常波动；若持续高，检查物体摩擦/质量随机化</td></tr>
+      <tr><td>cache size 长时间不涨</td><td>几乎没有 env 撑满 399 步</td><td>看 <code>max_ep_seen</code> 是否远小于 239；减小 num_envs 试跑便于读 log</td></tr>
+      <tr><td>进程 exit 但找不到 .npy</td><td>工作目录不对</td><td>必须在 <code>era_dexhand_lab</code> 根目录跑；文件在 <code>./cache/</code></td></tr>
+      <tr><td>train 报 No saved grasping states</td><td>路径或 scale_range 不一致</td><td>确认 <code>grasp_cache_path</code> 与文件名 <code>_0.4-0.6-8</code> 对齐</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 读 Fail Stats 一行</div>
+  <table>
+    <tbody>
+      <tr><td>steps=100</td><td>统计窗口：最近 100 个 control step。</td></tr>
+      <tr><td>cond1_fail=4200(42%)</td><td>100 步 × N env × 每步失败次数累计；42% 表示四成时间里至少有一指距离超标。</td></tr>
+      <tr><td>total_success=3500(35%)</td><td>三条件同时成立的步数比例——不是「写入缓存」数，只是单步存活。</td></tr>
+      <tr><td>真正写入</td><td>只有 <code>episode_length</code> 到 399 且从未 reset 的 env，在 _reset_idx 里 append 一行。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="faq">七、常见问题（FAQ）</h2>
+
+<div class="ask-box">
+  <b>Q：gen_grasp 要跑多久？可以 Ctrl+C 吗？</b><br>
+  A：RTX 5070 Ti、num_envs≈几十时常见 5–15 分钟。中途 Ctrl+C 不会保存完整 .npy（只有满 8 bucket 才 write）。断了就重新跑，或接受不完整缓存（训练会缺行）。
+</div>
+
+<div class="ask-box">
+  <b>Q：cond2 为什么用 10 个传感器而不是 5 个？</b><br>
+  A：Xhand URDF 里部分指尖有多个碰撞 patch；Grasp 用更密的 <code>force_matrix_w</code> 判「至少 3 点用力」，比单点力更稳。Rotate 训练观测仍用 5 维触觉（对应 5 个 dip 传感器）。
+</div>
+
+<div class="ask-box">
+  <b>Q：能不能手工编辑 .npy 某一行？</b><br>
+  A：可以 <code>d = np.load(...); d[42, 21:24] = [...]; np.save(...)</code>，但不推荐——没经过 cond 筛选的行可能导致 reset 后立刻 height_reset。应用 gen_grasp 自动收集。
+</div>
+
+<div class="ask-box">
+  <b>Q：50000 行够不够？</b><br>
+  A：对 10–80 个并行 env 通常足够：每个 bucket 6250 种起手式，重复率不高。若你发现 TensorBoard 里同一 grasp pose 出现太频繁，可改 cfg 把 <code>5e4</code> 加大后重跑 gen_grasp（会线性变慢）。
+</div>
+
+<div class="intuition">
+<b>与 16 章的衔接：</b> Rotate 环境 <code>__init__</code> 把整张 Excel 读进 <code>saved_grasping_states</code>；<code>_reset_idx</code> 按 <code>scale_ids</code> 抽行写回仿真。读 16 章 buffer 表时若疑惑「相册从哪来」，就是本章 gen_grasp 的产物。
+</div>
+
+<h2 id="cond-scenarios">八、cond 成败小故事（三个场景）</h2>
+<div class="symtable">
+  <div class="symtitle">同一时刻三个并行 env 的 cond 对比</div>
+  <table>
+    <thead><tr><th>env</th><th>五指距离 (m)</th><th>&gt;0.5N 传感器数</th><th>姿态偏角</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>#0</td><td>0.07, 0.08, 0.06, 0.09, 0.05</td><td>4 个</td><td>8°</td><td>✓ 继续</td></tr>
+      <tr><td>#1</td><td>0.06, 0.07, 0.08, <strong>0.11</strong>, 0.07</td><td>3 个</td><td>5°</td><td>✗ cond1 无名指太远</td></tr>
+      <tr><td>#2</td><td>0.05, 0.06, 0.07, 0.08, 0.06</td><td><strong>2 个</strong></td><td>3°</td><td>✗ cond2 只有 2 指用力</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>三个 env 都「看起来快抓住了」，但 #1、#2 会立刻 reset；只有 #0 若再稳 199 步且重力轮换不换崩，才有机会在第 399 步写入 .npy 新的一行。</p>
+
+<div class="walk-table">
+  <div class="walktitle">白话 walk-through · 从 cond 到 Excel 一行</div>
+  <table>
+    <tbody>
+      <tr><td>每步 _get_rewards</td><td>算 cond1∧2∧3；失败 → reset_buf=1。</td></tr>
+      <tr><td>撑满 399 步</td><td>说明 399 拍内从未失败——极难，故要 num_envs 并行攒。</td></tr>
+      <tr><td>_reset_idx 里 success 掩码</td><td>把达标 env 的 28 维 cat 出来，append 到对应 bucket 列表。</td></tr>
+      <tr><td>6250 行满</td><td>该尺寸「相册」封底；8 本都封底 → np.save 一张总表。</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<details class="tryit">
+  <summary>想动手试试？</summary>
+  <div class="tryit-body">
+    <p>检查缓存是否已生成（无需 Isaac Sim）：</p>
+    <pre><code>ls -lh cache/xhand_grasp_linspace_*.npy
+python -c "
+import numpy as np
+d = np.load('cache/xhand_grasp_linspace_0.4-0.6-8.npy')
+print('shape:', d.shape, '  # 行数 × 28')
+print('bucket_grasp:', d.shape[0] // 8)
+print('--- row 0 (bucket 0, 最细圆柱) ---')
+print('joints[0:5]:', d[0, :5].round(3))
+print('obj pos:', d[0, 21:24].round(4))
+print('obj quat:', d[0, 24:28].round(4))
+print('--- row 6250 (bucket 1 第一行) ---')
+print('obj pos:', d[6250, 21:24].round(4))
+"</code></pre>
+    <p>期望：总行数 ≈ 50000（8 bucket × 6250），第二维 = 28。两个 bucket 的物体位置应略有差异（直径不同）。</p>
+  </div>
+</details>
+
+<div class="tip">
+<b>本章小结。</b> Grasp 环境奖励为 0，用 cond1（5 指 &lt;10 cm）、cond2（≥3 点 &gt;0.5 N）、cond3（姿态 &lt;30°）筛成功姿态，六向重力增鲁棒性。<code>.npy</code> 就是 50000×28 的 Excel 表。gen_grasp.py 零动作无限循环直到缓存满。训练环境从同名文件按 bucket 随机抽行作为 episode 起点。下一章看 wrapper 如何把环境观测递给 PPO。</div>
+
+<div class="pager">
+  <a href="17-obs-reward-code.html"><div class="dir">← 上一章</div><div class="ttl">17 · 观测与奖励代码</div></a>
+  <a class="next" href="19-wrapper-layer.html"><div class="dir">下一章 →</div><div class="ttl">19 · Wrapper 适配层</div></a>
+</div>
+
+</div>
+<aside class="toc"></aside>
+</div>
+
+<footer>era_dexhand_lab · 强化学习教学文档 · 第 18 章 · 抓取缓存</footer>
+</body>
+</html>
