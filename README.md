@@ -6,9 +6,14 @@
 
 ## 真机效果
 
+https://github.com/user-attachments/assets/4429134e-4014-4c6c-9df5-5424de91d9c3
+
+<details>
+<summary>备用播放与下载入口</summary>
+
 [![DexGen 真机演示：MANUS 意图控制 XHand 正转、反转与停止](internship_showcase/assets/dexgen-real-poster.webp)](internship_showcase/assets/dexgen-real.mp4?raw=1)
 
-> ▶ 点击封面播放真机演示。也可以[直接打开或下载 MP4](internship_showcase/assets/dexgen-real.mp4?raw=1)。
+</details>
 
 ## 项目完成了什么
 
