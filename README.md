@@ -6,9 +6,9 @@
 
 ## 真机效果
 
-![DexGen 真机演示：MANUS 意图控制 XHand 正转、反转与停止](internship_showcase/assets/dexgen-real.mp4)
+[![DexGen 真机演示：MANUS 意图控制 XHand 正转、反转与停止](internship_showcase/assets/dexgen-real-poster.webp)](internship_showcase/assets/dexgen-real.mp4?raw=1)
 
-如果当前 Markdown 客户端未显示播放器，可[直接打开或下载演示视频](internship_showcase/assets/dexgen-real.mp4)。
+> ▶ 点击封面播放真机演示。也可以[直接打开或下载 MP4](internship_showcase/assets/dexgen-real.mp4?raw=1)。
 
 ## 项目完成了什么
 
