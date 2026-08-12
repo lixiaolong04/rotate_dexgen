@@ -1,410 +1,164 @@
-# XHand1 Pro 灵巧手 —— 手内旋转 Sim-to-Real 全流程
+# XHand DexGen：学习辅助遥操作的手内旋转
 
-在 **NVIDIA Isaac Sim + IsaacLab** 中训练 Robotera **XHand1 Pro**（21 DOF 灵巧手）学会「手内物体旋转」（in-hand rotation），并 **sim2real 部署到真实硬件**。仿真里已达成任意朝向（全 SO(3)）旋转，真机已实现连续稳定旋转 2 分钟以上。
+本项目在 XHand Pro 灵巧手上跑通了 **DexGen 数据采集、生成模型训练、仿真验证与真机部署的完整链路**。系统不要求操作者逐关节精确遥控机械手，而是把 MANUS 手套作为上层意图输入，由学习得到的底层控制器完成稳定的顺时针旋转（CW）、逆时针旋转（CCW）和保持（HOLD）。
 
-<p align="center">
-  <img src="doc/截图/旋转.gif" width="30%" />
-  <img src="doc/截图/image%20copy.png" width="63%" />
-</p>
+> 当前交付重点是“遥操作意图 + 学习控制”的手内旋转系统。仓库中原有的强化学习手内旋转代码仍然保留，但它现在主要承担 **上游专家策略与轨迹数据来源**，不再是 README 的唯一主线。
 
-> 📖 **完整 RL DEMO 介绍**（团队学习 / 客户讲解用）：见 [docs/rl_demo_intro/RL_DEMO介绍.html](docs/rl_demo_intro/RL_DEMO介绍.html)，浏览器直接打开即可。
+## 真机效果
 
----
+![DexGen 真机演示：MANUS 意图控制 XHand 正转、反转与停止](internship_showcase/assets/dexgen-real.mp4)
 
-## 0. 这套流程是什么（30 秒版）
+如果当前 Markdown 客户端未显示播放器，可[直接打开或下载演示视频](internship_showcase/assets/dexgen-real.mp4)。
 
-```
-URDF/STL ──convert──▶ USD 资产
-                        │
-   gen_grasp（一次性，生成抓取初始姿态缓存）
-                        │
-   train teacher（PPO，能看到特权信息 priv_info）
-                        │
-   distill student（ProprioAdapt，盲策略，只看本体+触觉，TConv 时序网络）
-                        │
-   eval_batch（多条件量化挑权重：掉落率/转速/反转/抖动）
-                        │
-   deploy（真机 XHand1 Pro，EtherCAT，MIT 力矩模式 mode4）
-```
-
-- **teacher** 看得到物体位姿 / 摩擦等特权信息，学得快但真机拿不到这些。
-- **student** 只吃真机也有的观测（关节角 + 目标角 + 指尖触觉），用时序卷积（TConv）从历史里回归出隐状态。**部署的是 student。**
-
----
-
-## 1. 硬件 & 环境
-
-### 1.1 训练机（本地 Blackwell 笔记本）
-
-| 组件 | 版本 / 说明 |
-|------|------|
-| GPU | RTX 5070 Ti Laptop (Blackwell sm_120, 12GB) |
-| NVIDIA Driver | **580.159.03**（⚠️ RTX 50 系 + 驱动 595 + Isaac Sim 5.x = 100% 崩溃，必须降到 580-open） |
-| OS | Ubuntu 24.04 |
-| conda env | `env_isaaclab`，Python 3.11 |
-| Isaac Sim | 5.1.0 (pip) |
-| IsaacLab | v2.3.2（源码 clone 在 `~/IsaacLab`） |
-| PyTorch | 2.7.0+cu128（支持 sm_120） |
-
-### 1.2 云端大规模训练（可选）
-
-百度 AIHC 4×L20 / IsaacSim 4.5 / IsaacLab 2.2 / Python 3.10。teacher 用 4 seed × 4 卡并行（无 DDP，各卡独立 seed），`num_envs=20480`。
-
-### 1.3 安装踩坑
-
-```bash
-# IsaacLab ./isaaclab.sh --install 不会装 isaaclab 核心包，手动补：
-pip install 'setuptools<81'                                    # 修 pkg_resources 缺失
-pip install --no-build-isolation -e ~/IsaacLab/source/isaaclab
-sudo apt install -y cmake build-essential                       # isaaclab.sh --install 需要
-
-# 本仓库（editable）
-conda activate env_isaaclab
-cd era_dexhand_lab
-pip install -e .
-```
-
----
-
-## 2. 资产：URDF → USD
-
-真机厂商给的是 **URDF + STL 网格**（`assets/xhand_green/xhand_right/urdf/`）。Isaac Sim 的物理 / 渲染引擎吃的是 **USD**，所以要先转换（碰撞体、关节驱动、质量惯量都在转换时烘进 USD）。转换脚本：
-
-```bash
-python scripts/convert_xhand_urdf.py     # 版本自适应 IsaacLab 2.2/2.3 的 API 差异
-```
-
-转好的 USD 已随仓库提供（`assets/xhand_green/.../xhand_right.usd`），一般无需重跑。STL 网格也已入库，URDF 可直接加载。
-
-> 手动调试可直接 `isaacsim` 打开 GUI，`File → Open` 选 `xhand_right.usd`。
-
----
-
-## 3. 训练（headless）
-
-```bash
-conda activate env_isaaclab
-cd era_dexhand_lab
-export CUDA_VISIBLE_DEVICES=0
-```
-
-### 3.1 生成抓取初始姿态缓存（一次性，5–10 分钟）
-
-抓取姿态决定每个 episode 手指从哪儿开始包住物体，是能不能转起来的关键。同一 scale 配置会覆盖旧缓存。
-
-```bash
-python rl_isaaclab/scripts/gen_grasp.py \
-    --task Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0 --headless
-```
-
-缓存产物在 `cache/xhand_grasp_linspace_*.npy`（已随仓库提供 proven 版本，物理没变时可直接复用，不必重跑）。
-
-### 3.2 训练 teacher（PPO）
-
-```bash
-# 本地 12GB 显存安全起步 num_envs=10；云端 L20 用 20480
-python rl_isaaclab/scripts/train.py \
-    --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless --num_envs 10
-```
-
-### 3.3 蒸馏 student（部署用这个）
-
-```bash
-python rl_isaaclab/scripts/train.py \
-    --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --headless \
-    --algorithm ProprioAdapt --load_path <stage1 teacher last.pth>
-```
-
-### 3.4 量化挑权重（eval_batch）
-
-蒸馏 reward 高 ≠ 真机好。用 `eval_batch` 在多摩擦条件下量化 **掉落率 / 转速 / 每局圈数 / 反转率 / 动作抖动**，挑最鲁棒 + 最平滑的那个部署：
-
-```bash
-python rl_isaaclab/scripts/eval_batch.py \
-    --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --algorithm ProprioAdapt \
-    --load_path ckpts/<训练目录>/
-```
-
-### 3.5 可视化策略
-
-```bash
-python rl_isaaclab/scripts/play.py \
-    --task Isaac-Inhand-Rotate-Xhand-Wave-v0 --so3 --num_envs 16 \
-    --algorithm ProprioAdapt --load_path ckpts/<训练目录>/best.pth
-```
-
----
-
-## 4. 真机部署（XHand1 Pro）
-
-真机用 **EtherCAT**（网口 `enp129s0`）通信，Docker 镜像 `xhand-deploy:22.04`。
-
-### 4.1 核心：控制模式 mode4（MIT 力矩）
-
-XHand1 Pro SDK 有两种关节控制模式（读 `.deb` C++ 头文件搞清的，见 `docs/xhand_control_manual.md`）：
-
-- **mode 3**：三环位控，SDK **忽略 kp/kd**（早期 bring-up 一直没转就是踩这个坑）。
-- **mode 4**：**MIT 力矩模式，kp/kd 生效**。力矩 = `kp·位置误差 + kd·速度误差 + 前馈`，与仿真里的显式力矩 PD **同公式、同单位**。
-
-部署必须 `--mode 4 --kp 10 --kd 0.3 --speed 0`（speed = 目标速度，非 0 会瞬间猛动）。
-
-### 4.2 部署命令（当前真机最佳：V1 mask 冠军 8103）
-
-```bash
-cd era_dexhand_lab
-bash scripts/deploy_unilab_v1_student.sh 8103 --log v1_8103_real.npz
-```
-
-该脚本等价于：
-
-```bash
-python rl_isaaclab/deploy_xhand/deploy_xhand.py \
-  --load_path ckpts/unilab_v1_students_final_20260630/student_8103_best.pth \
-  --mode 4 --kp 10 --kd 0.3 --speed 0 \
-  --action_scale_mul 1.0 --min-fingers 2 \
-  --disable-tactile-ids 1,4          # ⚠️ 必须与训练对齐！见下
-```
-
-**部署键盘状态机**：
-
-- `e`：先缓慢张开并标定触觉，再回放 `cache/deploy_init_traj_xhand.npy` 进行预抓取。
-- `Enter`：抓取完成后启动旋转策略。
-- `w`：冻结并保持当前姿态；再次按下继续策略，不会张开手。
-- `q`：沿预抓取轨迹的逆序缓慢张开（约 6 秒），会释放物体。
-- `t`：空载时重新标定触觉。
-- `Ctrl-C` 或 `STOP`：先给全部关节发送 `mode=0`（idle/释放），再断开并退出。手会失去夹持力，物体下方必须有承接平台。
-
-抓不牢可加 `--close-extra 0.4`。跑完使用
-`python scripts/analyze_deploy_log.py <log>.npz` 复盘。
-
-> ⚠️ **`--disable-tactile-ids` 必须与训练配置一致**，否则真机观测分布外（OOD）：
-> - V1 训练时 mask 了食指(1)/小指(4)的触觉 → 部署 **必须** `--disable-tactile-ids 1,4`。
-> - option C（前 pad 几何过滤）不 mask → 部署 **不加** 该参数（默认 `[]`）。
-
-### 4.3 权重库（weight zoo）
-
-| 权重 | 血缘 | 真机表现 | 部署要点 |
-|------|------|----------|----------|
-| **`ckpts/unilab_v1_students_final_20260630/student_8103_best.pth`** | V1 mask（食指/小指触觉清零对齐真机） | ⭐**全项目真机最佳**，360° 转 + 轻物体可倒置 | `--disable-tactile-ids 1,4` |
-| `ckpts/frontpad_students_20260701/student_8500.pth` | option C 前 pad 几何过滤 | 仿真最优(19.91)，待真机 PK V1 | 不加 `--disable-tactile-ids` |
-| `ckpts/overnight_pose5/student_9402.pth` | pose5 顺时针 | 真机能转，轻物体略往上爬 | 默认 |
-| `ckpts/overnight_ccw/student_9503.pth` | 逆时针 CCW | 逆时针旋转 | 默认 |
-| `ckpts/retrain_pose2/student_t701.pth` | pose2 retrain | proven，掉落 4.1% | 默认 |
-| `ckpts/overnight_9000/student_9002.pth` | pose4b | 能转 | 默认 |
-| `ckpts/unilab_kp10/student_7001.pth` | uniform kp=10 回退版 | 基线 | 默认 |
-| `ckpts/overnight_pose6/student_9701.pth` | pose6 | 种子彩票 | 默认 |
-
-能稳定旋转的物体范围：**Ø32–48mm × H26–38mm（中心 Ø40 最稳）**。
-
----
-
-## 5. 关键坑（血泪总结）
-
-1. **驱动**：RTX 50 系必须 NVIDIA 580，595 必崩。
-2. **mode3 vs mode4**：位控模式 kp/kd 无效，真机再怎么调都不转 → 换 MIT 力矩模式 mode4。
-3. **触觉对齐**：训练清零了哪几指触觉，部署就必须清零同样几指（`--disable-tactile-ids`），否则 OOD。
-4. **选权重**：蒸馏 reward 高 ≠ 真机好；`best.pth` 常是低重力 / 后期 drift 假象，要在 -9.81 重力下用 `eval_batch` 评估掉落率 + 平滑度。
-5. **种子彩票**：仿真几乎一样的兄弟种子，真机迁移可能天差地别 —— 仿真不预测真机迁移，多 seed 训 + eval 挑。
-6. **摩擦**：`friction=False` 时摩擦走 USD 默认 0.5 ≠ 训练 base；真机指尖摩擦 0.08–0.10 是 UniLab 建模值的 10–25 倍，软 kp 驱不动 → 回退 uniform kp=10。
-7. **散热**：真机连跑关节会到 86℃，`deploy --temp_limit 80` 自动停机。
-8. **analyze 看不出转没转** —— 必须人眼看物体上画的线。
-
-
----
-
-## 6. 目录导览
-
-| 路径 | 内容 |
-|------|------|
-| `rl_isaaclab/tasks/inhand_rotate/` | 任务定义（`xhand_wave_env*.py` = 训练环境；`*_grasp_*` = 抓取生成） |
-| `rl_isaaclab/scripts/` | `gen_grasp.py` / `train.py` / `play.py` / `eval_batch.py` |
-| `rl_isaaclab/deploy_xhand/` | 真机部署栈（`deploy_xhand.py` 入口 + `deploy_cfg.py` + `deploy_env.py`） |
-| `assets/xhand_green/` | XHand1 Pro 左右手 URDF + STL + 转好的 USD |
-| `cache/` | 抓取姿态缓存 + 部署 init traj + 关节 / 摩擦标定 JSON |
-| `ckpts/` | 各血缘的 teacher/student 权重（见 §4.3 权重库） |
-| `scripts/` | 部署辅助、标定、诊断（`analyze_deploy_log.py` / `calib_fingertip.py` / `check_pad_contact.py` …） |
-| `docs/rl_demo_intro/` | **RL DEMO 完整介绍**（HTML，团队学习 / 客户讲解用） |
-
----
-
-## 7. 复刻这套流程（TL;DR）
-
-```bash
-# 1. 装环境（§1.3），驱动确认 580
-# 2. 资产已随仓库（USD 已转好），可直接用
-# 3. 抓取缓存已随仓库；要重生成：
-python rl_isaaclab/scripts/gen_grasp.py --task Isaac-Inhand-Rotate-Grasp-Xhand-Wave-v0 --headless
-# 4. 训 teacher → 蒸 student → eval 挑权重（§3）
-# 5. 真机部署 proven 冠军：
-bash scripts/deploy_unilab_v1_student.sh 8103 --log v1_8103_real.npz
-```
-
-想直接上真机、跳过训练：仓库已带 §4.3 的全部权重，选一个 `--load_path` 即可（注意 §4.2 的触觉对齐）。
-
----
-
-## 附录 A：最佳权重的训练参数
-
-所有真机主力权重（**8103 / 9402 / 8500 / t701**）共享同一套「pose5 + uniform kp=10 + UniLab 对齐」基础配方，只在少数几处有差异。以下数值取自 `rl_isaaclab/tasks/inhand_rotate/xhand_wave_env_cfg.py` 与 `agents/ppo_cfg.yaml`。
-
-### A.1 共享基础配方
-
-**观测 / 动作 / 控制**
-
-| 项 | 值 |
-|---|---|
-| action_space | 21（每关节目标）|
-| observation_space | 141 =（21 关节角 + 21 目标角 + 5 指触觉法向力）× 3 帧 |
-| 学生时序历史 `prop_hist_len` | 30 帧（TConv 输入）|
-| `action_scale` | 1/24 |
-| `torque_control` | True（显式力矩 PD，与真机 mode4 同公式）|
-| kp / kd | **10 / 0.3**（uniform，armature 0.003，joint friction 0.1）|
-| `decimation` / sim dt | 12 / (1/240) → 控制频率 **20 Hz** |
-| episode | 20 s（≈400 控制步）|
-| clip_obs / clip_actions | 5.0 / 1.0 |
-
-**物体 & 任务**
-
-| 项 | 值 |
-|---|---|
-| 物体 | 圆柱，质量 0.10 kg |
-| `scale_range` | [0.4, 0.7, 10] → Ø32–56 mm（10 档）|
-| 重力 | 满 **−9.81 从 step0**（无幅值课程 `gravity_curriculum=False`）|
-| 朝向 | `reset_random_quat=True`，**全 SO(3)**（Shoemake 均匀）|
-| `rot_axis` | (0,0,1)，angvel clip ±0.5 |
-| `drop_dist_thresh` | 0.025 m（手帧判定，一离稳定区即终止）|
-
-**Reward 权重**
-
-| 项 | 值 |
-|---|---|
-| rotate_reward | **+2.5** |
-| object_linvel_penalty | −0.3 |
-| pos_diff_penalty | −0.4 |
-| torque_penalty | −0.1 |
-| work_penalty | −0.5 |
-| object_pos_reward | +0.003 |
-
-**域随机化（DR，全开）**
-
-| 项 | 范围 |
-|---|---|
-| PD 增益 | p_gain ×[0.5, 2.0]，d_gain ×[0.5, 2.0] |
-| 摩擦系数 | ×[0.5, 2.0]；base 弹性体 1.6 / 金属 0.2 / 物体 1.0 |
-| 质心 COM | [−0.01, 0.01] m |
-| 物体质量 | [0.01, 0.25] kg |
-| 随机外力 | force_scale 2，prob 0.25，decay 0.9 / 0.08 s |
-| 关节角噪声 | 0.02 |
-| 触觉 | contact_smooth 0.5，latency 0.005 s |
-| 关节限位 | `dof_limits_scale` 0.9（对齐真机）|
-
-**PPO（teacher）— `ppo_cfg.yaml`**
-
-| 项 | 值 |
-|---|---|
-| 策略网络 MLP | [512, 256, 128] |
-| priv_mlp（特权编码）| [256, 128, 9] |
-| num_envs | 20480（云端 L20）/ 本地 10 |
-| γ / GAE λ | 0.99 / 0.95 |
-| learning_rate | 1e-3 |
-| kl_threshold | 0.02 |
-| horizon / minibatch / mini_epochs | 8 / 32768 / 5 |
-| critic_coef / entropy_coef / e_clip | 8（有效 4.0）/ 0.01 / 0.2 |
-| grad_norm | 1.0 |
-| max_agent_steps | 300 M（实际 ~300–500M 到顶，看 plateau 停）|
-| priv_info_dim | 9 = [0:3]物体位移 [3]摩擦 [4]质量 [5:8]COM [8]物体scale |
-
-**蒸馏（student, ProprioAdapt）**：teacher 冻结，student 用 **TConv** 从 30 帧本体 + 触觉历史回归 9 维特权隐状态，只吃真机可得观测。蒸馏约 480 M steps（手动看 plateau 停）。**部署的就是这个 student。**
-
-### A.2 各最佳权重的差异（只有这几处不同）
-
-| 权重 | 抓取姿态 | `disable_tactile_ids` | `frontpad_filter` | 旋向 | 备注 |
-|---|---|---|---|---|---|
-| **8103**（V1，真机冠军）| pose5 | **[1,4]**（清零食指/小指触觉）| False | CW | 部署必须 `--disable-tactile-ids 1,4` |
-| 9402（CW 冠军）| pose5 | [] | False | CW | 纯 141 obs |
-| 8500（option C，仿真最优）| pose5 | [] | **True** | CW | 前 pad 几何门控，法向阈值 0.014 |
-| 9503（CCW）| pose5 | [] | False | **CCW** | rot_axis 反向 |
-| t701（早期 proven）| pose2 | [] | False | CW | 掉落 4.1% |
-
-> option C 的 `frontpad_normal`（每指精确 3D 法向，dip_link 局部帧）：拇指 (0, 0.917, 0.399)，其余四指 (0.399, 0, 0.917)；投影阈值 0.014 m。
-
----
-
-## 附录 B：XHand 关节命名表（21 DOF，右手）
-
-| Joint 名称 | 手指 | 位置 | 含义 |
-|-----------|------|------|------|
-| `right_index_MCP_FE` | 食指 | 掌指关节 | 指根弯曲/伸直 |
-| `right_index_MCP_AA` | 食指 | 掌指关节 | 指根外展/内收 |
-| `right_index_PIP` | 食指 | 近端指间 | 中间关节 |
-| `right_index_DIP` | 食指 | 远端指间 | 指尖前关节 |
-| `right_middle_*` (FE/AA/PIP/DIP) | 中指 | 同上 | 4 DOF |
-| `right_ring_*` (FE/AA/PIP/DIP) | 无名指 | 同上 | 4 DOF |
-| `right_pinky_CMC` | 小指 | 腕掌关节 | 小指根更靠掌部 |
-| `right_pinky_*` (MCP_FE/MCP_AA/PIP/DIP) | 小指 | 同食指 | 4 DOF |
-| `right_thumb_CMC_FE` / `right_thumb_CMC_AA` | 拇指 | 腕掌关节 | 根部 |
-| `right_thumb_MCP_FE` / `right_thumb_MCP_AA` | 拇指 | 掌指关节 | 中段 |
-| `right_thumb_IP` | 拇指 | 指间关节 | 末端 |
-
-*本 README 记录的是一个真实 sim-to-real 项目从环境搭建到 2 分钟稳定旋转的完整路径。完整技术讲解见 `docs/rl_demo_intro/`。*
-
----
-
-## DexGen：基于 RL 轨迹的生成式灵巧手控制
-
-本仓库除上文的 RL teacher/student 流程外，还包含完整的 **DexGen** 系统。DexGen
-使用冻结的 CW/CCW RL 专家采集轨迹，学习“状态 → 未来关键点运动 → 关节目标”的
-生成式控制器，并支持 RL guidance、MANUS 手套遥操以及 XHand 真机部署。
+## 项目完成了什么
 
 ```text
-RL 专家轨迹 / MANUS command
-            ↓
-Guided Diffusion：生成未来两帧的 10 个手部关键点运动
-            ↓
-IDM：预测 21 维绝对 PD target
-            ↓
-Isaac Sim XHand / 真实 XHand
+CW / CCW 强化学习专家
+          │ rollout：状态、动作、关键点、触觉、物体状态、恢复标签……
+          ▼
+     双向旋转轨迹数据集
+          │
+          ├───────────────┐
+          ▼               ▼
+  Diffusion Policy       IDM
+状态 + 模式 + guidance   状态 + 关键点运动
+          │               │
+          └──── 10 个关键点 ────► 21 维绝对 PD target
+                                      │
+MANUS 手套 ─► CW / CCW / HOLD 意图 ──┤
+                                      ▼
+                              仿真验证与 XHand 真机
 ```
 
-DexGen 的主要入口位于：
+目前已经完成：
 
-| 路径 | 内容 |
+- 训练并固化 CW、CCW 两个方向的强化学习专家策略；
+- 使用专家策略 rollout 双向旋转数据，并加入噪声、域随机化和主动恢复样本；
+- 训练关键点空间 Diffusion Policy 与 IDM（learned inverse dynamics model）；
+- 完成无 guidance、RL 加噪声 guidance、MANUS guidance 三类仿真闭环验证；
+- 完成 MANUS 上层意图与 `CW / CCW / HOLD` 状态机；
+- 打通 IsaacLab → DexGen → Docker XHand SDK → EtherCAT 真机部署链路；
+- 通过 Git LFS 交付当前正式模型与演示资产。
+
+尚未完成的是 DexGen 中更通用的 **AnyGrasp-to-AnyGrasp**：从任意稳定抓姿出发，根据任意目标抓姿或操作意图完成多技能灵巧操作。当前仓库已包含 XHand 抓取数据集生成等前置工作，但对应的通用策略尚未训练成功。
+
+## 为什么采用学习辅助遥操作
+
+纯遥操作机械手并不等于把人手关节角直接复制给机器手。人手与 XHand 在关节拓扑、运动范围、连杆尺寸和接触几何上均不一致，因此必须经过重定向；通信延迟、手套噪声和操作者动作误差还会进一步放大接触不稳定。在手内旋转中，一次不合适的撤指或张掌就可能导致物体掉落。
+
+本项目将控制分成两层：
+
+- **上层意图层**：MANUS 表达旋转方向、继续操作或停止等低带宽意图；
+- **下层技能层**：Diffusion 与 IDM 根据本体状态、触觉和关键点 guidance 生成稳定、连续的关节目标。
+
+这样既保留人的决策能力，又把高频接触控制和掉落恢复交给从专家数据中学习到的控制器。
+
+## 算法与数据路线
+
+### 1. 强化学习专家：轨迹数据从哪里来
+
+CW 与 CCW 专家是在 IsaacLab 中训练的手内旋转策略。它们不是最终部署时唯一的控制器，而是 DexGen 的 **数据教师**：采集器加载冻结的专家策略，在并行仿真环境中 rollout，并将每一步完整记录下来。
+
+当前专家权重：
+
+| 方向 | 权重 |
 | --- | --- |
-| `dexgen/commands/data/` | RL 轨迹采集和数据审计 |
-| `dexgen/commands/train/` | Diffusion、IDM 及实验分支训练 |
-| `dexgen/commands/eval/` | 离线评估、仿真闭环和 guided 推理 |
-| `manus_dexgen_bridge/` | MANUS 输入、手势标定和遥操仿真 |
-| `dexgen/deploy/` | XHand 真机 DexGen/MANUS 部署 |
+| CW | `ckpts/overnight_pose5/student_9402.pth` |
+| CCW | `ckpts/overnight_ccw/student_9503.pth` |
 
-当前正式推荐使用 active-recovery v3：
+双方向数据能让同一套生成模型区分旋转模式，避免只学习单一运动方向。采集时还使用动作噪声、物理域随机化和主动扰动恢复，使数据覆盖稳定旋转之外的偏离状态。
 
-```text
-Diffusion: dexgen/checkpoints/diffusion_modes_full_dr_active_recovery_v3_v2b_best.pt
-IDM:       dexgen/checkpoints/idm_modes_full_dr_active_recovery_v3_best.pt
-```
+数据集保存的是 **完整轨迹信息**，包括关节状态、专家绝对 PD target、10 个关键点、五指触觉、物体位姿与速度、奖励、终止类型和恢复标签等。后续训练会按不同模型的输入/监督目标从这些字段中取子集；“Diffusion 只预测关键点”不代表数据集只保存关键点。
 
-交付仓库只保留上述正式 v3 模型，便于接手人安装后立即进行第一次仿真测试；历史
-DexGen 对照模型、RL 轨迹数据和训练/评估日志不随仓库交付。需要继续训练时，使用
-仓库内保留的 CW/CCW RL 专家重新采集数据：CW 为
-`ckpts/overnight_pose5/student_9402.pth`，CCW 为
-`ckpts/overnight_ccw/student_9503.pth`。具体采集和审计流程见
-[`dexgen/data/README.md`](dexgen/data/README.md) 以及交接手册第 4 节。
-
-首次接手请按以下顺序阅读：
-
-1. **[DexGen 项目交接与快速上手手册](dexgen/HANDOVER.md)**：环境安装、云端训练、
-   RL 数据采集、IDM/Diffusion 训练、仿真推理、MANUS/XHand 部署及安全检查；
-2. **[DexGen 运行手册](dexgen/README.md)**：日常启动命令、参数和交互按键；
-3. **[DexGen 开发与训练流程](dexgen/docs/DEVELOPMENT.md)**：数据契约、模型结构和实验验收；
-4. **[MANUS Bridge 快速启动](manus_dexgen_bridge/README.md)**；
-5. **[XHand 真机运行说明](dexgen/deploy/README.md)**。
-
-最短仿真验证命令：
+推荐采集入口：
 
 ```bash
-cd /home/user/rotate_dexgen
 conda activate env_isaaclab
+cd /home/user/rotate_dexgen
+./dexgen/pipelines/collect_recovery_dataset.sh all 0 9
+```
 
+数据集默认不随仓库交付，需按交接手册重新生成。详细分片、续跑和审计方法见 [DexGen 交接手册](dexgen/HANDOVER.md#4-rl-轨迹数据采集)。
+
+### 2. 十个关键点：生成模型与机器人关节之间的中间表征
+
+项目没有让 Diffusion 直接生成 XHand 的 21 维关节命令，而是在腕坐标系中选取 10 个关键点：五个 PIP 点和五个指尖胶垫点。每一帧关键点运动为 `10 × 3`，描述“每根手指应该向哪里移动”。
+
+这层表征保留了抓取与接触几何，同时弱化了 XHand 特定关节结构对生成模型的绑定：
+
+```text
+轨迹中的 21 维关节状态
+        │ 精确正运动学（FK）
+        ▼
+腕坐标系 10 × 3 关键点
+        │ Diffusion 学习未来关键点运动
+        ▼
+当前状态 + 关键点运动
+        │ IDM
+        ▼
+下一规划时刻的 21 维绝对 PD target
+```
+
+### 3. Diffusion Policy：生成未来关键点运动
+
+Diffusion 使用最近 4 帧状态历史作为条件。正式配置中的单帧状态为 83 维：78 维本体状态加 5 个触觉标量；此外还输入 CW/CCW 模式和可选的外部 guidance。模型生成未来两个规划时刻的十关键点运动，并可通过 guided sampling 在“遵循 MANUS 意图”和“保持专家数据分布”之间进行调节。
+
+### 4. IDM：从关键点运动还原为关节控制
+
+IDM 接收当前状态和关键点运动，预测下一规划时刻的 21 维绝对关节 PD target。仓库中有时把它简称为“逆运动学模型”，但它并不是传统的解析 IK，而是从专家轨迹中训练得到的 **逆动力学模型（Inverse Dynamics Model）**。
+
+Diffusion 和 IDM 必须保持 state dimension、history、prediction steps、关键点定义与触觉架构一致，不能混用不同实验版本的权重。
+
+当前正式权重：
+
+```text
+dexgen/checkpoints/diffusion_modes_full_dr_active_recovery_v3_v2b_best.pt
+dexgen/checkpoints/idm_modes_full_dr_active_recovery_v3_best.pt
+```
+
+### 5. 触觉条件与主动恢复
+
+五指触觉不仅用于判断是否掉落，也作为模型状态的一部分。主动恢复数据会先对专家动作施加扰动，再记录干净专家如何重新建立接触并恢复目标方向旋转。正式训练混合稳定连续旋转数据与成功恢复窗口，因此模型能够看到接触力减弱、手指偏离和物体滑移等边界状态。
+
+## 四种控制方式
+
+| 模式 | 上层输入 | 下层执行 | 用途 |
+| --- | --- | --- | --- |
+| 无 guidance | CW/CCW mode | Diffusion → IDM | 正式生成策略闭环评估 |
+| RL guidance | RL 专家动作加噪声后转为关键点 command | Guided Diffusion → IDM | 仿真功能、扰动与恢复测试 |
+| MANUS guidance | 手套相对动作或手势意图 | Guided Diffusion → IDM | 学习辅助遥操作与真机部署 |
+| 纯 MANUS | RetargetX 的 21 维目标 | 限位后直接 PD | 对照、预抓取与链路排查 |
+
+自动模式下，持续张开手掌约 1 秒进入 `HOLD`：控制器锁存当前安全 PD target，并绕过 Diffusion/IDM，避免机械手照搬人的张掌而松开物体；恢复自然抓握后，系统继续进入 HOLD 前的 CW 或 CCW 方向。MANUS 断连或数据过期同样会进入安全保持。
+
+## 快速开始
+
+### 环境与大文件
+
+推荐环境为 Ubuntu、NVIDIA GPU、Isaac Sim/IsaacLab 和 `env_isaaclab` Conda 环境。模型、演示视频等大文件由 Git LFS 管理，首次克隆后执行：
+
+```bash
+git lfs install
+git lfs pull
+```
+
+完整环境版本、云端迁移与依赖安装见 [DexGen 交接手册](dexgen/HANDOVER.md)。
+
+### 核心测试
+
+```bash
+conda activate env_isaaclab
+cd /home/user/rotate_dexgen
+
+python -m pytest tests/test_dexgen_pipeline.py -q
+python -m pytest tests/test_manus_dexgen_bridge.py tests/test_dexgen_deploy.py -q
+```
+
+### 正式仿真闭环
+
+CW 示例：
+
+```bash
 python dexgen/commands/eval/eval_dexgen.py \
   --diffusion dexgen/checkpoints/diffusion_modes_full_dr_active_recovery_v3_v2b_best.pt \
   --idm dexgen/checkpoints/idm_modes_full_dr_active_recovery_v3_best.pt \
@@ -412,6 +166,115 @@ python dexgen/commands/eval/eval_dexgen.py \
   --sensor_profile raw --so3 --device cuda:0
 ```
 
-项目中的 `IDM` 是 learned inverse dynamics model，内部交流有时称为“逆运动学”，
-但它并非传统解析 IK。新实验不要覆盖上述正式 checkpoint；数据、Diffusion、IDM
-以及触觉 profile 必须保持同一训练契约。
+将 `--mode cw` 改为 `--mode ccw` 可评估逆时针方向。正式实验应固定配置并运行多个 environment seed 与 diffusion seed，不能用单次成功代替统计结果。
+
+### RL 加噪声 guidance 仿真
+
+```bash
+python dexgen/commands/eval/eval_guided.py \
+  --controller noisy_rl --mode cw \
+  --diffusion dexgen/checkpoints/diffusion_modes_full_dr_active_recovery_v3_v2b_best.pt \
+  --idm dexgen/checkpoints/idm_modes_full_dr_active_recovery_v3_best.pt \
+  --sensor_profile raw --noise_alpha 0.1 \
+  --steps 1200 --so3 --interactive_mode_switch --device cuda:0
+```
+
+运行中可用 `c` / `v` / `m` 切换 CW、CCW 或翻转方向，`i` 查看状态，`q` 安全退出。
+
+## MANUS 与 XHand 真机部署
+
+真机控制涉及 EtherCAT、机械限位和温度保护。首次操作请先阅读 [真机部署手册](dexgen/deploy/README.md)，并在手和物体下方放置承接平台。
+
+### 终端 1：启动 MANUS 输入源
+
+```bash
+sudo docker exec ros2_dev supervisorctl restart manus_core_mini
+sudo docker exec -it ros2_dev bash
+```
+
+进入容器后：
+
+```bash
+cd /root/xbot/algorithm/teleopx/retargetx-2.2.18
+bash script/run_hand_manus_dexgen_source.sh
+```
+
+### 终端 2：启动 XHand SDK 服务
+
+```bash
+cd /home/user/rotate_dexgen
+bash dexgen/deploy/run_xhand_sdk_server.sh
+```
+
+等待出现 `[hardware] listening on tcp://127.0.0.1:8031`。
+
+### 终端 3：启动控制器
+
+```bash
+# 手动切换 MANUS / DexGen
+bash dexgen/deploy/run_manus_dexgen_real.sh
+
+# 或：MANUS 手势自动控制 CW / CCW / HOLD
+bash dexgen/deploy/run_manus_auto_real.sh --guidance-strength 1000
+```
+
+常用按键：
+
+| 按键 | 功能 |
+| --- | --- |
+| `e` | 缓慢张开、触觉标定并执行接触即停预抓取 |
+| `Enter` / `n` | 启动 DexGen |
+| `t` | 纯 MANUS 21 关节遥操作 |
+| `h` 后 `a` | 标定并启动 MANUS guidance → DexGen |
+| `w` | 暂停并 HOLD，再按一次恢复 |
+| `d` | 停止遥操输入并保持当前安全目标 |
+| `c` / `v` / `m` | CW、CCW、切换方向 |
+| `i` | 显示输入、方向、MANUS 状态和最高温度 |
+| `q` | 沿安全轨迹缓慢张开并释放物体 |
+| `x` / `Ctrl-C` | 发送 mode 0、保存日志并退出 |
+
+当前真机参数固定为 `mode=4, kp=10, kd=0.3, speed=0, torque=0`。不要在不了解硬件后果时修改增益、限幅、温度保护或退出轨迹。
+
+## 仓库结构
+
+```text
+rotate_dexgen/
+├── dexgen/                    # 数据、训练、评估、pipeline、真机部署与交接文档
+│   ├── commands/              # collect / train / eval 入口
+│   ├── pipelines/             # 可续跑的数据采集与训练流水线
+│   ├── checkpoints/           # 当前正式 Diffusion / IDM 权重（Git LFS）
+│   ├── deploy/                # XHand 真机服务、控制器和硬件说明
+│   ├── docs/                  # 实验记录与设计说明
+│   └── HANDOVER.md            # 接手人应优先阅读的完整手册
+├── manus_dexgen_bridge/       # MANUS / RetargetX 与 DexGen 的输入桥接
+├── rl_isaaclab/               # 上游 RL 环境、训练和教师/学生策略
+├── source/rl_lab/             # IsaacLab 扩展、任务和机器人资产
+├── ckpts/                     # CW / CCW RL 专家权重（Git LFS）
+├── lightning-grasp/           # XHand 抓取数据集与 AnyGrasp-to-AnyGrasp 前置工作
+├── internship_showcase/       # 项目展示页、图片和视频
+├── tests/                     # DexGen、MANUS bridge 与部署回归测试
+└── docs/                      # RL 原理课程、旧版演示与硬件说明
+```
+
+## 建议阅读顺序
+
+1. [DexGen 项目交接与快速上手手册](dexgen/HANDOVER.md)：环境、数据契约、训练、评估、部署和排障；
+2. [DexGen 运行手册](dexgen/README.md)：不同仿真/遥操入口及全部参数；
+3. [XHand 真机部署手册](dexgen/deploy/README.md)：三终端启动、状态机与安全流程；
+4. [项目目录说明](dexgen/docs/PROJECT_LAYOUT.md)：文件职责和本机/云端迁移约定；
+5. [原强化学习手内旋转演示说明](docs/rl_demo_intro/RL_DEMO介绍.html)：上游专家策略与早期 Sim-to-Real 工作；
+6. [项目展示页](internship_showcase/index.html)：DexGen、RL 与抓取数据集的图文视频总览。
+
+## 当前边界与后续方向
+
+当前版本证明了以下闭环可行：
+
+```text
+双方向 RL 专家
+→ 轨迹数据与恢复样本
+→ 关键点 Diffusion + IDM
+→ MANUS 意图控制
+→ XHand 真机 CW / CCW / HOLD
+```
+
+下一阶段的核心不是继续堆叠单一旋转演示，而是扩展到 AnyGrasp-to-AnyGrasp：完善多物体、多抓姿图数据，训练 grasp-to-grasp 上层规划/强化学习策略，并把当前旋转原语推广为可组合的多任务、多技能灵巧操作系统。同时需要补充更系统的真机长时统计、跨物体泛化、传感器标定漂移测试和安全故障注入。
