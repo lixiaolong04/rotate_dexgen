@@ -1,0 +1,13 @@
+stateDiagram-v2
+  [*] --> CW
+  CW --> CCW: 识别到反向手势趋势
+  CCW --> CW: 识别到反向手势趋势
+  CW --> HOLD: 完全张掌持续 1 秒
+  CCW --> HOLD: 完全张掌持续 1 秒
+  HOLD --> CW: 恢复抓握约 0.2 秒 / 返回原方向
+  HOLD --> CCW: 恢复抓握约 0.2 秒 / 返回原方向
+  note right of HOLD
+    锁存当前 PD target
+    绕过 Diffusion / IDM
+    不跟随人的张手而松开
+  end note

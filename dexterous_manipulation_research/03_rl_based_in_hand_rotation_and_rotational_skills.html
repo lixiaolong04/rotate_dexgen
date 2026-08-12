@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>基于强化学习的手内旋转｜从 Finger Gait 到拧螺丝</title>
+  <style>
+    :root{--bg:#07111e;--panel:#0d1d30;--panel2:#10243a;--line:#29455f;--text:#eef6fc;--muted:#93aabd;--cyan:#43c7ff;--green:#59dfae;--orange:#ffb44c;--violet:#b58cff;--red:#ff7185;--shadow:0 18px 52px rgba(0,0,0,.29)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--text);background:radial-gradient(1000px 620px at 85% -8%,rgba(181,140,255,.13),transparent 65%),radial-gradient(760px 560px at -5% 36%,rgba(67,199,255,.08),transparent 68%),var(--bg);font-family:Inter,"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.72;letter-spacing:.01em}a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}.shell{width:min(1240px,calc(100% - 40px));margin:auto}.hero{min-height:96vh;display:grid;align-items:center;position:relative;overflow:hidden;padding:55px 0}.hero:after{content:"";position:absolute;right:-170px;top:-40px;width:610px;height:610px;border:1px solid rgba(181,140,255,.12);border-radius:50%;box-shadow:0 0 0 90px rgba(181,140,255,.018),0 0 0 180px rgba(181,140,255,.01)}.eyebrow{color:var(--cyan);font-size:13px;font-weight:850;letter-spacing:.18em;text-transform:uppercase}h1{font-size:clamp(42px,6vw,78px);line-height:1.05;letter-spacing:-.045em;margin:20px 0 24px;max-width:1050px}h1 span{color:var(--cyan)}.lead{font-size:clamp(18px,2vw,23px);color:#b9ccdc;max-width:980px}.chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:27px}.chip{padding:8px 13px;border:1px solid var(--line);border-radius:999px;background:rgba(13,29,48,.75);color:#bed1df;font-size:13px}.paper-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:38px;position:relative;z-index:2}.paper-card{padding:18px;border:1px solid var(--line);border-top:3px solid var(--cyan);border-radius:15px;background:rgba(13,29,48,.84);min-height:190px}.paper-card:nth-child(2){border-top-color:var(--green)}.paper-card:nth-child(3){border-top-color:var(--orange)}.paper-card:nth-child(4){border-top-color:var(--violet)}.paper-card:nth-child(5){border-top-color:var(--red)}.paper-card b{display:block;font-size:19px}.paper-card a{display:block;margin:8px 0 10px;color:#dcecf7;font-size:12px;font-weight:650;line-height:1.45}.paper-card a:hover{color:var(--cyan)}.paper-card span{display:block;color:var(--muted);font-size:11px;line-height:1.5}.layout{display:grid;grid-template-columns:245px minmax(0,1fr);gap:46px;align-items:start}.toc{position:sticky;top:22px;padding:20px;border:1px solid var(--line);border-radius:15px;background:rgba(8,20,34,.9);backdrop-filter:blur(12px);font-size:13px}.toc strong{display:block;margin-bottom:10px}.toc a{display:block;padding:5px 9px;color:var(--muted);border-left:2px solid transparent}.toc a:hover,.toc a.active{color:var(--cyan);border-left-color:var(--cyan);background:rgba(67,199,255,.05);text-decoration:none}main{padding-bottom:100px}section{padding:72px 0 6px;scroll-margin-top:20px}.kicker{color:var(--cyan);font-size:12px;font-weight:850;letter-spacing:.16em;text-transform:uppercase}h2{font-size:clamp(30px,4vw,46px);line-height:1.2;letter-spacing:-.025em;margin:8px 0 18px}h3{font-size:23px;margin:34px 0 12px}h4{font-size:17px;margin:0 0 8px}p,li,td{color:#b6c9d8}.intro{font-size:18px;color:#c8d9e5;max-width:900px}.panel{padding:24px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(16,36,58,.94),rgba(11,26,44,.94));box-shadow:var(--shadow)}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.tag{display:inline-block;padding:3px 8px;border:1px solid currentColor;border-radius:999px;color:var(--cyan);font-size:11px;font-weight:850;letter-spacing:.08em;margin-bottom:10px}.callout{margin:22px 0;padding:18px 22px;border-left:4px solid var(--cyan);border-radius:0 12px 12px 0;background:rgba(67,199,255,.07);color:#cbdde9}.callout.green{border-color:var(--green);background:rgba(89,223,174,.07)}.callout.warn{border-color:var(--orange);background:rgba(255,180,76,.07)}.callout.red{border-color:var(--red);background:rgba(255,113,133,.07)}.formula{padding:20px;border:1px solid rgba(181,140,255,.35);border-radius:14px;background:rgba(181,140,255,.07);color:#eadfff;text-align:center;font:14px/1.9 "SFMono-Regular",Consolas,monospace;overflow:auto}.flow{display:grid;grid-template-columns:1fr 38px 1fr 38px 1fr;align-items:stretch;margin:25px 0}.flow.four{grid-template-columns:1fr 32px 1fr 32px 1fr 32px 1fr}.flow .arrow{display:grid;place-items:center;color:var(--cyan);font-size:24px}.node{padding:20px;border:1px solid var(--line);border-top:3px solid var(--cyan);border-radius:15px;background:var(--panel)}.node.green{border-top-color:var(--green)}.node.orange{border-top-color:var(--orange)}.node.violet{border-top-color:var(--violet)}.node.red{border-top-color:var(--red)}.node small{color:var(--muted)}.diagram{padding:22px;border:1px solid var(--line);border-radius:18px;background:#091726;box-shadow:var(--shadow)}table{width:100%;border-collapse:collapse;margin:20px 0;font-size:13.5px}th,td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{text-align:left;color:#deedf7;background:rgba(67,199,255,.07)}td strong{color:var(--text)}ul,ol{padding-left:1.25em}li{margin:6px 0}.paper-head{display:flex;gap:18px;align-items:flex-start}.paper-index{flex:0 0 48px;width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:rgba(67,199,255,.12);color:var(--cyan);font-weight:900}.paper-head h3{margin:0}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}.metric{padding:17px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}.metric b{display:block;font-size:23px;color:var(--cyan);line-height:1.25}.metric span{font-size:12px;color:var(--muted)}.steps{counter-reset:step}.step{position:relative;margin:16px 0;padding:20px 20px 20px 62px;border:1px solid var(--line);border-radius:15px;background:var(--panel)}.step:before{counter-increment:step;content:counter(step);position:absolute;left:18px;top:19px;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:rgba(67,199,255,.14);color:var(--cyan);font-weight:900}.step h4{margin-bottom:4px}.step p{margin:0}.matrix td:first-child{white-space:nowrap}.demo{position:relative;overflow:hidden}.demo:after{content:attr(data-rank);position:absolute;right:14px;top:8px;font-size:48px;font-weight:900;color:rgba(255,255,255,.045)}.score{display:flex;gap:6px;margin-top:13px}.score i{width:24px;height:5px;border-radius:4px;background:var(--line)}.score i.on{background:var(--green)}.timeline{position:relative;padding-left:28px}.timeline:before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:var(--line)}.event{position:relative;margin-bottom:25px}.event:before{content:"";position:absolute;left:-27px;top:8px;width:12px;height:12px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 5px rgba(67,199,255,.12)}.event p{margin:4px 0}.check{list-style:none;padding:0}.check li{position:relative;padding-left:27px}.check li:before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:900}.print{position:fixed;right:22px;bottom:22px;z-index:10;padding:11px 16px;border:1px solid var(--line);border-radius:999px;background:#10243a;color:var(--text);cursor:pointer;box-shadow:var(--shadow)}footer{padding:36px 0 60px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}@media(max-width:1120px){.paper-grid{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}.toc{position:relative;top:auto;columns:2}.toc strong{column-span:all}.grid4{grid-template-columns:repeat(2,1fr)}}@media(max-width:720px){.shell{width:calc(100% - 24px)}.hero{min-height:auto;padding:72px 0 46px}.paper-grid,.grid2,.grid3,.grid4,.metrics{grid-template-columns:1fr}.toc{columns:1}.flow,.flow.four{grid-template-columns:1fr}.flow .arrow{height:38px;transform:rotate(90deg)}.tablewrap{overflow:auto}.print{display:none}}@media print{:root{--bg:#fff;--panel:#fff;--text:#102030;--muted:#52677a;--line:#cbd7e1}body{background:#fff;font-size:10.5pt}.hero{min-height:auto;padding:16mm 0 9mm}.hero:after,.toc,.print{display:none}.layout{display:block}.panel,.paper-card,.node,.diagram,.metric,.step{box-shadow:none;background:#fff;break-inside:avoid}p,li,td,.lead,.intro{color:#334e62}section{padding:9mm 0 0}h2,h3{break-after:avoid}table,.flow,.callout,.grid2,.grid3{break-inside:avoid}}
+    .paper-grid{grid-template-columns:repeat(3,1fr)}.paper-card{min-height:165px}.paper-figure{margin:26px 0 30px}.paper-figure>a{display:block;position:relative;padding:14px;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:var(--shadow);overflow:hidden}.paper-figure>a:after{content:"点击查看原图 ↗";position:absolute;right:22px;bottom:20px;padding:6px 10px;border-radius:999px;background:rgba(7,17,30,.86);color:#eef6fc;font-size:11px;opacity:0;transform:translateY(5px);transition:.2s}.paper-figure>a:hover:after{opacity:1;transform:none}.paper-figure img{display:block;width:100%;height:auto;border-radius:8px}.paper-figure figcaption{margin-top:12px;color:var(--muted);font-size:13px}.figure-guide{margin-top:14px}.figure-guide .panel{padding:16px 18px;box-shadow:none}.figure-guide h4{font-size:14px}.figure-guide p{font-size:12px;margin:0}@media(max-width:720px){.paper-grid{grid-template-columns:1fr}.paper-figure>a{padding:6px}.paper-figure>a:after{display:none}}
+  </style>
+</head>
+<body>
+  <button class="print" onclick="window.print()">打印 / 导出 PDF</button>
+  <header class="hero">
+    <div class="shell">
+      <div class="eyebrow">Dexterous Manipulation Research · Mainline 03</div>
+      <h1>基于强化学习的<br><span>手内旋转与旋拧技能</span></h1>
+      <p class="lead">从自由物体上的 emergent finger gait，走向人类可操作度先验、视触觉多轴旋转、动态转笔、双手拧盖与 XHand 螺丝/螺母任务：旋转不是一个动作，而是一族不断增加接触约束的技能。</p>
+      <div class="chips"><span class="chip">技术主线 03</span><span class="chip">核心论文：6 篇</span><span class="chip">算法：PPO · Energy Prior · Teacher–Student · BC</span><span class="chip">目标平台：XHand</span><span class="chip">更新：2026-08-11</span></div>
+      <div class="paper-grid">
+        <div class="paper-card"><b>HORA</b><a href="https://arxiv.org/abs/2210.04887" target="_blank" rel="noopener">In-Hand Object Rotation via Rapid Motor Adaptation</a><span>arXiv:2210.04887 · CoRL 2022<br>本体感知连续旋转 / finger gait 基线</span></div>
+        <div class="paper-card"><b>RotateIt</b><a href="https://arxiv.org/abs/2309.09979" target="_blank" rel="noopener">General In-Hand Object Rotation with Vision and Touch</a><span>arXiv:2309.09979 · CoRL 2023<br>视触觉多轴旋转</span></div>
+        <div class="paper-card"><b>DexMani</b><a href="https://arxiv.org/abs/2608.00554" target="_blank" rel="noopener">DexMani: Human-Derived Manipulability Guidance for Dexterous Rotation</a><span>arXiv:2608.00554 · 2026<br>人类可操作度演化先验 / 跨手型 RL</span></div>
+        <div class="paper-card"><b>PenSpin</b><a href="https://arxiv.org/abs/2407.18902" target="_blank" rel="noopener">Lessons from Learning to Spin “Pens”</a><span>arXiv:2407.18902 · CoRL 2024<br>动态细长物连续旋转</span></div>
+        <div class="paper-card"><b>Twisting Lids</b><a href="https://arxiv.org/abs/2403.02338" target="_blank" rel="noopener">Twisting Lids Off with Two Hands</a><span>arXiv:2403.02338 · CoRL 2024<br>双手相对旋转与开盖</span></div>
+        <div class="paper-card"><b>DexScrew</b><a href="https://arxiv.org/abs/2512.02011" target="_blank" rel="noopener">Learning Dexterous Manipulation Skills from Imperfect Simulations</a><span>arXiv:2512.02011 · ICRA 2026<br>XHand 螺母紧固与拧螺丝</span></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="shell layout">
+    <nav class="toc"><strong>报告目录</strong><a href="#summary">01 核心结论</a><a href="#why">02 为什么研究旋转</a><a href="#taxonomy">03 任务谱系</a><a href="#common">04 通用 RL 骨架</a><a href="#hora">05 HORA</a><a href="#rotateit">06 RotateIt</a><a href="#dexmani">07 DexMani</a><a href="#penspin">08 PenSpin</a><a href="#lids">09 Twisting Lids</a><a href="#dexscrew">10 DexScrew</a><a href="#compare">11 横向比较</a><a href="#gait">12 Finger gait 原理</a><a href="#xhand">13 XHand 落地建议</a><a href="#demos">14 Demo 创意</a><a href="#evaluation">15 评测体系</a><a href="#conclusion">16 结论</a></nav>
+    <main>
+      <section id="summary">
+        <div class="kicker">01 · Executive summary</div><h2>先给结论：螺丝任务不是“换物体版 HORA”</h2>
+        <p class="intro">自由手内旋转学习的是可循环的手指换步；真正拧螺丝还要把这个低层运动原语，与工具轴线稳定、接触扭矩、轴向推进和滑移恢复组合起来。</p>
+        <div class="grid3">
+          <div class="panel"><span class="tag">最小可复现起点</span><h4>HORA / z 轴连续旋转</h4><p>只用本体感知历史，先验证 XHand 能否稳定形成松开—跨越—重新接触的周期 finger gait。</p></div>
+          <div class="panel"><span class="tag" style="color:var(--orange)">最相关工程路线</span><h4>DexScrew 三阶段</h4><p>简化仿真学手指运动先验，技能辅助遥操采集真机多模态数据，再以触觉和历史训练闭环 BC。</p></div>
+          <div class="panel"><span class="tag" style="color:var(--green)">核心判断</span><h4>先学运动，再补真实接触</h4><p>复杂螺纹不必在第一天精确模拟；但真机阶段必须补上触觉、腕部运动与恢复数据。</p></div>
+        </div>
+        <div class="callout"><strong>建议主线：</strong>HORA-style 单手旋转基线 → DexMani-style 人类可操作度先验引导 XHand RL → 工具柄旋转 → 技能辅助遥操采集 → 触觉历史闭环 → 螺丝任务；RotateIt、PenSpin 和 Twisting Lids 分别作为多感知、动态技能和双手扩展支线。</div>
+      </section>
+
+      <section id="why">
+        <div class="kicker">02 · Motivation</div><h2>为什么在 DexGen 之后还要单独研究手内旋转</h2>
+        <div class="grid2">
+          <div class="panel"><h4>它是检验低层动作先验的标准任务</h4><p>纯遥操作受延迟、重定向误差和操作者能力限制，很难稳定地产生高频、周期性 finger gait。RL 能在大量并行接触试验中自动发现相位协调。</p></div>
+          <div class="panel"><h4>它是多种实用任务的共同原语</h4><p>旋转工具柄、拧旋钮、转钥匙、开瓶盖、旋灯泡和调焦，本质都需要“保持力闭合的同时积累相对角位移”。</p></div>
+        </div>
+        <div class="diagram" style="margin-top:24px">
+          <svg viewBox="0 0 1020 300" role="img" aria-label="从自由旋转到螺丝任务的约束增加图" style="width:100%;height:auto">
+            <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#43c7ff"/></marker></defs>
+            <g font-family="Inter,Noto Sans SC,sans-serif" fill="#eef6fc">
+              <text x="45" y="42" fill="#93aabd" font-size="13">任务约束逐级增加 →</text>
+              <rect x="45" y="78" width="160" height="116" rx="16" fill="#10243a" stroke="#43c7ff"/><text x="125" y="112" text-anchor="middle" font-weight="800">自由旋转</text><text x="125" y="139" text-anchor="middle" fill="#93aabd" font-size="12">稳定 + 角速度</text><text x="125" y="164" text-anchor="middle" fill="#43c7ff" font-size="12">HORA</text>
+              <rect x="245" y="78" width="160" height="116" rx="16" fill="#10243a" stroke="#59dfae"/><text x="325" y="112" text-anchor="middle" font-weight="800">目标轴旋转</text><text x="325" y="139" text-anchor="middle" fill="#93aabd" font-size="12">形状 + 接触感知</text><text x="325" y="164" text-anchor="middle" fill="#59dfae" font-size="12">RotateIt</text>
+              <rect x="445" y="78" width="160" height="116" rx="16" fill="#10243a" stroke="#ffb44c"/><text x="525" y="112" text-anchor="middle" font-weight="800">动态细长物</text><text x="525" y="139" text-anchor="middle" fill="#93aabd" font-size="12">惯性 + 抛接相位</text><text x="525" y="164" text-anchor="middle" fill="#ffb44c" font-size="12">PenSpin</text>
+              <rect x="645" y="78" width="160" height="116" rx="16" fill="#10243a" stroke="#b58cff"/><text x="725" y="112" text-anchor="middle" font-weight="800">双手相对旋转</text><text x="725" y="139" text-anchor="middle" fill="#93aabd" font-size="12">静摩擦 + 双手协调</text><text x="725" y="164" text-anchor="middle" fill="#b58cff" font-size="12">Twisting Lids</text>
+              <rect x="845" y="78" width="160" height="116" rx="16" fill="#10243a" stroke="#ff7185"/><text x="925" y="112" text-anchor="middle" font-weight="800">螺纹紧固</text><text x="925" y="139" text-anchor="middle" fill="#93aabd" font-size="12">轴向推进 + 扭矩反馈</text><text x="925" y="164" text-anchor="middle" fill="#ff7185" font-size="12">DexScrew</text>
+              <path d="M205 136H235M405 136H435M605 136H635M805 136H835" stroke="#43c7ff" stroke-width="2" marker-end="url(#arr)"/>
+              <text x="510" y="245" text-anchor="middle" fill="#c5d6e3" font-size="14">共同底座：周期 finger gait + 稳定接触 + 在线纠偏</text><text x="510" y="270" text-anchor="middle" fill="#93aabd" font-size="12">差异来自对象几何、关节约束、感知需求与 Sim-to-Real 路径</text>
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <section id="taxonomy">
+        <div class="kicker">03 · Task taxonomy</div><h2>六篇论文分别解决什么难点</h2>
+        <div class="tablewrap"><table><thead><tr><th>任务</th><th>被旋转对象</th><th>主要约束</th><th>策略真正要学会的事</th></tr></thead><tbody>
+          <tr><td><strong>HORA</strong></td><td>手中近柱状/多样物体</td><td>抗重力且不掉落</td><td>循环换指、适应质量/摩擦/尺寸</td></tr>
+          <tr><td><strong>RotateIt</strong></td><td>多形状日常物体</td><td>指定手坐标系旋转轴</td><td>从视觉与触觉推断形状和接触状态，抑制非目标轴旋转</td></tr>
+          <tr><td><strong>DexMani</strong></td><td>瓶盖、桌面物体、龙头</td><td>连续接触切换与跨手型迁移</td><td>让每次接触变化既推进当前旋转，又保留下一步继续旋转的运动能力</td></tr>
+          <tr><td><strong>PenSpin</strong></td><td>细长笔状物</td><td>动态惯性、瞬时失去部分接触</td><td>正确相位的推拨—滚动—再抓取，并保持笔水平</td></tr>
+          <tr><td><strong>Twisting Lids</strong></td><td>瓶身与瓶盖两刚体</td><td>双手、静摩擦、相对旋转</td><td>一手稳定瓶身、一手转盖，同时重定位并避免掉落</td></tr>
+          <tr><td><strong>DexScrew</strong></td><td>螺母/螺丝刀</td><td>螺纹、轴向推进、滑移、触觉</td><td>把手指旋转 gait 与腕部下降/对齐闭环协调起来</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section id="common">
+        <div class="kicker">04 · Shared algorithmic skeleton</div><h2>通用 RL 骨架：为什么 finger gait 会“自己长出来”</h2>
+        <div class="flow four"><div class="node"><h4>并行仿真</h4><small>随机质量、摩擦、尺度、重心、控制器参数</small></div><div class="arrow">→</div><div class="node green"><h4>旋转目标</h4><small>奖励目标轴角速度或角位移</small></div><div class="arrow">→</div><div class="node orange"><h4>稳定正则</h4><small>物体平移、掉落、能耗、扭矩、姿态偏移</small></div><div class="arrow">→</div><div class="node violet"><h4>周期 gait</h4><small>部分手指保持，另一手指跨步再接触</small></div></div>
+        <div class="formula">r = w<sub>rot</sub>·r<sub>rotation</sub> − w<sub>drop</sub>·p<sub>drop</sub> − w<sub>lin</sub>‖v‖² − w<sub>τ</sub>‖τ‖² − w<sub>work</sub>|τᵀq̇| + task-specific terms</div>
+        <p>如果只奖励角速度，策略可能甩飞物体、靠掌心摩擦、用不真实高速动作或绕错误轴旋转。真正决定 gait 质量的往往是奖励组合、动作平滑、初始状态分布和失败提前终止，而不只是 PPO 本身。</p>
+        <div class="grid3"><div class="panel"><h4>观测</h4><p>关节位置 + 历史动作是最低配；增加物体位姿、深度、触觉或 privileged latent 可处理更复杂形状和接触。</p></div><div class="panel"><h4>动作</h4><p>多数工作输出关节目标位置或相对增量，再由高频 PD 控制器转为力矩，便于 Sim-to-Real。</p></div><div class="panel"><h4>迁移</h4><p>域随机化适合自由旋转；复杂动态任务常需要 teacher–student、真实轨迹微调或触觉 BC 补齐仿真缺失。</p></div></div>
+        <div class="callout green"><strong>DexMani 增加了第五个关键模块——探索引导：</strong>任务 reward 只告诉策略“有没有转动”，可操作度能量先验进一步告诉它“这次换指之后，手是否仍有能力继续沿目标轴旋转”。</div>
+      </section>
+
+      <section id="hora">
+        <div class="kicker">05 · Foundational paper</div><div class="paper-head"><div class="paper-index">01</div><div><h3>HORA：In-Hand Object Rotation via Rapid Motor Adaptation</h3><a href="https://arxiv.org/abs/2210.04887" target="_blank" rel="noopener">arXiv:2210.04887 · CoRL 2022</a></div></div>
+        <p class="intro">经典之处不只是“能转”，而是证明了不显式写 finger-gait 规则，仅靠旋转目标与稳定正则，就能在仿真中学出可零样本迁移的周期换指动作。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/hora_figure2_pipeline.png" target="_blank" title="点击查看 HORA Figure 2 原图"><img src="assets/paper_figures/hora_figure2_pipeline.png" alt="HORA 三阶段总体架构：基础策略训练、适应模块训练和真机部署" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 2｜HORA training and deployment pipeline。</strong>从 privileged object-property encoder 与 base policy 联合训练，到冻结控制器、监督学习 adaptation module，最后仅凭本体感知历史在真机在线估计 extrinsics。来源：<a href="https://arxiv.org/abs/2210.04887" target="_blank" rel="noopener">Qi et al., arXiv:2210.04887</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 上层：学会控制</h4><p>物体真实属性经 μ 编成 z，与短时状态共同输入 PPO base policy。</p></div><div class="panel"><h4>② 中层：学会估计</h4><p>冻结 π，用长历史训练 φ，使 ẑ 逼近 privileged z，而不是重新学习控制。</p></div><div class="panel"><h4>③ 下层：真机部署</h4><p>真实物性不再可见；φ 与 π 均以 20 Hz 运行，在线适应对象变化。</p></div></div>
+        </figure>
+        <div class="steps">
+          <div class="step"><h4>Stage A｜训练 privileged base policy</h4><p>编码器 μ 将物体位置、尺寸、质量、摩擦和质心等 9 维特性压缩成 8 维 extrinsics <em>z</em>。策略 π 接收最近 3 帧关节位置、3 帧历史动作和 <em>z</em>，用 PPO 输出 Allegro Hand 的 16 维关节目标。</p></div>
+          <div class="step"><h4>Stage B｜学习快速适应模块</h4><p>适应模块 φ 从本体感知和动作历史估计 <em>ẑ</em>，用 privileged encoder 产生的 <em>z</em>作监督。它不必明确识别物体质量，而是学习对控制有用的隐变量。</p></div>
+          <div class="step"><h4>Stage C｜真机闭环执行</h4><p>部署时仅使用关节与动作历史：<em>ẑ</em>=φ(history)，动作 <em>a</em>=π(history,<em>ẑ</em>)。策略 20 Hz，底层 PD 300 Hz，无需视觉或触觉。</p></div>
+        </div>
+        <h3>奖励与训练设置</h3>
+        <div class="grid2"><div class="panel"><h4>主要奖励</h4><ul><li>奖励物体沿手坐标 z 轴的角速度；</li><li>惩罚手偏离初始姿态；</li><li>惩罚物体线速度、机械功、关节力矩；</li><li>物体掉落或进入不可恢复状态时终止。</li></ul></div><div class="panel"><h4>训练分布</h4><ul><li>Isaac Gym 中 16,384 个并行环境；</li><li>随机柱体直径、长度、质量、摩擦和质心；</li><li>从稳定 precision grasp 开始；</li><li>真机展示 30+ 种、约 5–200 g 的不同物体。</li></ul></div></div>
+        <div class="callout green"><strong>对 XHand 的直接价值：</strong>这是最适合作为第一版旋转基线的框架。先忽略视觉与复杂螺纹，验证 12-DoF XHand 是否能凭历史状态形成稳定的 thumb–index / middle 交替 contact gait。</div>
+        <div class="callout warn"><strong>不要误解：</strong>HORA 假设物体已在稳定初始抓取中，且只做单一 z 轴连续旋转；它不解决抓取建立、任意姿态重定向、工具轴对齐或螺纹推进。</div>
+      </section>
+
+      <section id="rotateit">
+        <div class="kicker">06 · Multimodal extension</div><div class="paper-head"><div class="paper-index" style="color:var(--green);background:rgba(89,223,174,.12)">02</div><div><h3>RotateIt：General In-Hand Object Rotation with Vision and Touch</h3><a href="https://arxiv.org/abs/2309.09979" target="_blank" rel="noopener">arXiv:2309.09979 · CoRL 2023</a></div></div>
+        <p class="intro">RotateIt 将 HORA 从“只凭历史猜物性、只绕 z 轴”升级为“看见物体形状、感觉指尖接触、沿多轴旋转”。关键仍是 privileged teacher 与可部署感知模型的分工。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/rotateit_figure2_pipeline.png" target="_blank" title="点击查看 RotateIt Figure 2 原图"><img src="assets/paper_figures/rotateit_figure2_pipeline.png" alt="RotateIt 两阶段总体架构：Oracle Policy Training 与 Visuotactile Policy Training" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 2｜RotateIt training pipeline。</strong>上半部分用物体旋转、网格和物理参数训练 privileged encoder 与控制策略；下半部分用视触觉 Transformer 预测相同 latent，并蒸馏控制动作。来源：<a href="https://arxiv.org/abs/2309.09979" target="_blank" rel="noopener">Qi et al., arXiv:2309.09979</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① Oracle 提供上限</h4><p>点云形状、物性和物体状态被压缩为 extrinsics z，帮助 PPO 快速学会多轴旋转。</p></div><div class="panel"><h4>② 感知替代特权状态</h4><p>视觉、触觉和本体历史经 Transformer 预测 ẑ，使真实部署不需要对象真值。</p></div><div class="panel"><h4>③ 两类蒸馏信号</h4><p>既约束 z 与 ẑ，也约束 oracle 动作与感知策略动作，降低 latent 误差对控制的影响。</p></div></div>
+        </figure>
+        <div class="flow"><div class="node green"><h4>Oracle PPO</h4><small>PointNet 形状 + 质量/摩擦/位姿 → privileged latent z</small></div><div class="arrow">→</div><div class="node green"><h4>Multimodal rollout</h4><small>采集前景深度、离散触点、关节与动作历史</small></div><div class="arrow">→</div><div class="node green"><h4>Visuotactile Transformer</h4><small>预测 ẑ，再复用 oracle 控制器输出关节目标</small></div></div>
+        <div class="grid2"><div class="panel"><h4>观测表示</h4><ul><li>视觉：前景物体深度图，3 层 ConvNet 编码；真机用 SAM 分割背景。</li><li>触觉：指尖接触位置投影到二维并离散为 8 个区域；真机使用四个全向视觉触觉传感器。</li><li>时序：深度、触点、关节位置和上一动作组成 token 序列，Transformer 推断 extrinsics。</li></ul></div><div class="panel"><h4>旋转奖励</h4><ul><li>奖励目标轴 <em>k</em> 上的角速度 ω·k；</li><li>新增非目标轴惩罚 ‖ω×k‖，对 x/y 轴尤其关键；</li><li>保留手姿、物体平移、能耗和力矩正则；</li><li>每个轴先单独训练，论文还展示六个主方向的统一策略。</li></ul></div></div>
+        <div class="metrics"><div class="metric"><b>3 axes</b><span>核心定量旋转方向</span></div><div class="metric"><b>16 DoF</b><span>Allegro Hand</span></div><div class="metric"><b>20 Hz</b><span>策略控制频率</span></div><div class="metric"><b>0 demo</b><span>仿真训练后真机零微调</span></div></div>
+        <div class="callout"><strong>对 XHand 的启发：</strong>如果工具柄、旋钮或物体形状差异导致仅本体感知无法判断接触相位，可以先引入低维触觉特征而非原始触觉图像；“接触区域 + 手指编号 + 历史”更容易跨仿真迁移。</div>
+      </section>
+
+      <section id="dexmani">
+        <div class="kicker">07 · Human-derived cross-embodiment prior</div><div class="paper-head"><div class="paper-index" style="color:var(--violet);background:rgba(181,140,255,.12)">03</div><div><h3>DexMani：Human-Derived Manipulability Guidance for Dexterous Rotation</h3><a href="https://arxiv.org/abs/2608.00554" target="_blank" rel="noopener">arXiv:2608.00554 · 2026</a></div></div>
+        <p class="intro">DexMani 对现有主线补上了一个非常关键的中间层：不把人手关节角硬重定向给机器人，而是从人类旋转示范中学习“接触变化应当怎样演化手的旋转能力”，再用这一跨形态先验指导不同机器人手的 RL 探索。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/dexmani_figure2_pipeline.png" target="_blank" title="点击查看 DexMani Figure 2 原图"><img src="assets/paper_figures/dexmani_figure2_pipeline.png" alt="DexMani 总体算法架构：人类示范预训练可操作度演化能量先验，并用该先验引导机器人残差强化学习策略" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 2｜DexMani pipeline。</strong>左侧从人类视触觉示范学习可操作度演化能量先验；右侧冻结该先验，在机器人 PPO 训练中产生 energy-guided bias，并由 residual policy 输出最终修正。来源：<a href="https://arxiv.org/abs/2608.00554" target="_blank" rel="noopener">Chen et al., arXiv:2608.00554</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 先看左上</h4><p>图像和触觉被编码成 VT tokens，同时重建输入，得到跨感知的交互表示。</p></div><div class="panel"><h4>② 再看左下</h4><p>正/负可操作度变化方向通过对比能量损失训练；低能量代表更符合人类成功旋转趋势。</p></div><div class="panel"><h4>③ 最后看右侧</h4><p>Base PPO 给名义动作，冻结先验提供 bias，Residual Policy 决定是否以及怎样修正。</p></div></div>
+        </figure>
+        <h3>中文重构：把论文原图压缩为四步工程流程</h3>
+        <div class="diagram">
+          <svg viewBox="0 0 1020 350" role="img" aria-label="DexMani 人类可操作度先验与机器人残差策略流程" style="width:100%;height:auto">
+            <defs><marker id="arrm" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#43c7ff"/></marker></defs>
+            <g font-family="Inter,Noto Sans SC,sans-serif" fill="#eef6fc">
+              <rect x="28" y="62" width="210" height="180" rx="18" fill="#10243a" stroke="#b58cff"/><text x="133" y="99" text-anchor="middle" font-weight="800">① Human Demo</text><text x="133" y="130" text-anchor="middle" fill="#93aabd" font-size="12">RGB + 触觉手套 + 手部姿态</text><text x="133" y="154" text-anchor="middle" fill="#93aabd" font-size="12">100,000+ 同步帧</text><text x="133" y="187" text-anchor="middle" fill="#b58cff" font-size="12">识别 active contacts</text><text x="133" y="211" text-anchor="middle" fill="#b58cff" font-size="12">计算人手 Jacobian</text>
+              <rect x="286" y="62" width="210" height="180" rx="18" fill="#10243a" stroke="#43c7ff"/><text x="391" y="99" text-anchor="middle" font-weight="800">② Manipulability</text><text x="391" y="130" text-anchor="middle" fill="#93aabd" font-size="12">接触 Jacobian + grasp matrix</text><text x="391" y="154" text-anchor="middle" fill="#93aabd" font-size="12">3×3 旋转可操作度矩阵</text><text x="391" y="187" text-anchor="middle" fill="#43c7ff" font-size="12">log-Euclidean → 6D m</text><text x="391" y="211" text-anchor="middle" fill="#43c7ff" font-size="12">统一 wrist-frame 坐标</text>
+              <rect x="544" y="62" width="210" height="180" rx="18" fill="#10243a" stroke="#ffb44c"/><text x="649" y="99" text-anchor="middle" font-weight="800">③ Energy Prior</text><text x="649" y="130" text-anchor="middle" fill="#93aabd" font-size="12">对比学习短时演化方向</text><text x="649" y="154" text-anchor="middle" fill="#93aabd" font-size="12">随机 / 反向 / 错坐标负样本</text><text x="649" y="187" text-anchor="middle" fill="#ffb44c" font-size="12">低能量 = 类人且可持续</text><text x="649" y="211" text-anchor="middle" fill="#ffb44c" font-size="12">预训练后冻结</text>
+              <rect x="802" y="62" width="190" height="180" rx="18" fill="#10243a" stroke="#59dfae"/><text x="897" y="99" text-anchor="middle" font-weight="800">④ Robot RL</text><text x="897" y="130" text-anchor="middle" fill="#93aabd" font-size="12">base action 周围采样候选</text><text x="897" y="154" text-anchor="middle" fill="#93aabd" font-size="12">能量最低候选形成 bias</text><text x="897" y="187" text-anchor="middle" fill="#59dfae" font-size="12">residual policy 做最终修正</text><text x="897" y="211" text-anchor="middle" fill="#59dfae" font-size="12">仍由原任务 reward 训练</text>
+              <path d="M238 152H274M496 152H532M754 152H790" stroke="#43c7ff" stroke-width="2" marker-end="url(#arrm)"/>
+              <text x="510" y="296" text-anchor="middle" fill="#c5d6e3" font-size="14">传递的是“旋转能力如何随接触变化”，不是人手关节动作</text><text x="510" y="322" text-anchor="middle" fill="#93aabd" font-size="12">因此同一冻结先验可指导 Shadow、Allegro、XHand 与 LEAP 的各自策略</text>
+            </g>
+          </svg>
+        </div>
+        <h3>核心表示：接触条件旋转可操作度</h3>
+        <div class="formula">M<sub>ω,t</sub> = P<sub>ω</sub>(G<sub>t</sub><sup>+</sup>)ᵀ C<sub>c,t</sub> G<sub>t</sub><sup>+</sup>P<sub>ω</sub>ᵀ + εI<br>m<sub>t</sub> = vech(log M<sub>ω,t</sub>) ∈ ℝ⁶</div>
+        <p>其中接触能力矩阵 <em>C</em> 由当前激活指尖的 Jacobian、触觉置信度和关节尺度构成，抓取矩阵 <em>G</em> 把指尖运动映射到对象旋转空间。统一手腕坐标轴后，人手和不同机器人都能用相同 6 维描述比较“绕 x/y/z 方向还能怎么转”。接触位置相对触觉接触中心计算，不依赖精确物体中心估计。</p>
+        <div class="grid2"><div class="panel"><h4>人类先验怎样学习</h4><ul><li>Quest 3 记录全局手姿，Manus 手套记录关节，触觉手套记录指尖压力，同时采集 RGB；</li><li>将原始 taxel 聚合为五个手指级二值接触 token，降低跨硬件对应难度；</li><li>视触觉 Transformer 编码 8 帧历史；</li><li>能量模型给示范中的短时可操作度变化低能量，给随机、反向及错坐标变化高能量，并预测变化幅值。</li></ul></div><div class="panel"><h4>机器人策略怎样被引导</h4><ul><li>Base policy 先提出名义动作 <em>a⁰</em>；</li><li>在 <em>a⁰</em> 周围加入高斯扰动形成候选动作；</li><li>用机器人自身 Jacobian 估计各候选引起的可操作度变化；</li><li>冻结能量模型选出最低能量方向作为 bias，residual policy 决定最终修正；</li><li>base 与 residual 仍只优化原任务 reward，先验不替代任务目标。</li></ul></div></div>
+        <h3>任务、跨手型结果与边界</h3>
+        <div class="metrics"><div class="metric"><b>100K+</b><span>人类多模态旋转帧</span></div><div class="metric"><b>3 tasks</b><span>拧盖 / 转物体 / 转龙头</span></div><div class="metric"><b>63.4%</b><span>XHand 拧盖 seen SR</span></div><div class="metric"><b>29.5%</b><span>XHand 拧盖 unseen SR</span></div></div>
+        <p>同一冻结人类先验用于 Shadow、Allegro 和 XHand 的拧盖任务，但每种手仍需在自己的动作空间单独训练策略；在 LEAP 上还评测拧盖、桌面转物体和转龙头，平均成功率 57.5%。龙头任务未出现在人类先验预训练中，因此该结果说明先验传递的是接触—能力演化趋势，而非记住具体物体动作。</p>
+        <div class="callout green"><strong>对当前 XHand 项目的价值：</strong>DexMani 比直接重定向人类手指轨迹更符合我们的痛点。它保留人类对“何时支撑、何时释放、怎样为下一步留出运动余量”的经验，同时允许 XHand 根据自身 12-DoF 运动学实现不同的关节动作。</div>
+        <div class="callout warn"><strong>工程边界：</strong>论文中的 XHand 拧盖跨手型结果是仿真评测；真机闭环展示并不等于已经证明 XHand 真机成功率。实现还要求可靠 FK/Jacobian、活动接触识别、视觉输入与候选动作在线评分。建议先离线计算 XHand manipulability descriptor，再决定是否复现完整视触觉能量模型。</div>
+      </section>
+
+      <section id="penspin">
+        <div class="kicker">08 · Dynamic manipulation</div><div class="paper-head"><div class="paper-index" style="color:var(--orange);background:rgba(255,180,76,.12)">04</div><div><h3>PenSpin：Lessons from Learning to Spin “Pens”</h3><a href="https://arxiv.org/abs/2407.18902" target="_blank" rel="noopener">arXiv:2407.18902 · CoRL 2024</a></div></div>
+        <p class="intro">转笔把准静态 finger gait 推入动态区：手指有时必须放开，让惯性继续携带物体，再在正确相位重新接触。论文最大的贡献是务实的 Real-to-Sim 数据桥接，而非假设纯 Sim-to-Real 足够。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/penspin_figure2_pipeline.png" target="_blank" title="点击查看 PenSpin Figure 2 原图"><img src="assets/paper_figures/penspin_figure2_pipeline.png" alt="PenSpin 总体架构：仿真 Oracle 数据、学生策略预训练、真机轨迹回放与微调" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 2｜PenSpin approach overview。</strong>Oracle RL 在仿真中生成高质量轨迹；这些轨迹一方面监督 student，另一方面开环回放到真机筛选成功示范；最后使用真实数据微调 student。来源：<a href="https://arxiv.org/abs/2407.18902" target="_blank" rel="noopener">Wang et al., arXiv:2407.18902</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 仿真负责发现动作</h4><p>带 privileged information 的 oracle 解决人类遥操难以产生动态转笔轨迹的问题。</p></div><div class="panel"><h4>② 同一轨迹有两个用途</h4><p>既形成大规模 Sim Dataset 预训练 student，也作为真机开环控制脚本获取 Real Dataset。</p></div><div class="panel"><h4>③ 真实数据负责校准</h4><p>复制预训练权重后再以真实成功片段 BC，修正摩擦、惯量和执行延迟差异。</p></div></div>
+        </figure>
+        <div class="steps">
+          <div class="step"><h4>Step 1｜仿真 RL oracle 探索动作</h4><p>Oracle 观察关节、上一目标、二值接触、指尖位置、笔位姿/角速度和 100 点点云。PPO 输出相对关节目标。奖励包含 z 轴旋转、能耗正则，并新增“最高点与最低点高度差”惩罚以保持笔水平。</p></div>
+          <div class="step"><h4>Step 2｜用 oracle 轨迹预训练本体感知策略</h4><p>不是让 student 在线 DAgger 乱跑，而是 rollout oracle，收集高质量状态—动作数据。Student 用 30 步关节和目标位置历史，经 temporal transformer 学习运动先验。</p></div>
+          <div class="step"><h4>Step 3｜Oracle trajectory replay 到真机</h4><p>把仿真成功轨迹直接作为真机开环控制器。虽然并非每条都成功，但成功执行提供了人类遥操难以采集的高质量真实示范。</p></div>
+          <div class="step"><h4>Step 4｜少量真机轨迹微调</h4><p>用少于 50 条真实轨迹微调预训练 student，补偿惯量、摩擦、结构柔性和执行器延迟误差；最终在训练物体与未见笔状物上连续旋转。</p></div>
+        </div>
+        <h3>两个容易被忽略的训练条件</h3>
+        <div class="grid2"><div class="panel"><h4>初始状态比算法更关键</h4><p>随机撒点几乎不给有效探索信号。作者人工设计旋转周期中的 6 类 canonical grasp，加噪并筛出稳定状态；只用单一姿态时 finger gait 不稳定。</p></div><div class="panel"><h4>纯感知蒸馏并不可靠</h4><p>本体 student 在仿真中难收敛，视觉/触觉又有显著 Sim-to-Real gap。因此采用“仿真预训练 + 成功轨迹真机微调”，接受仿真只提供 motion prior。</p></div></div>
+        <div class="callout warn"><strong>对 Demo 设计的启发：</strong>动态技能不适合从人类遥操作直接模仿。更合理的是用 RL 找到动作，再把可执行的仿真轨迹当作自动数据采集脚本，筛选真机成功片段进行闭环学习。</div>
+      </section>
+
+      <section id="lids">
+        <div class="kicker">09 · Bimanual extension</div><div class="paper-head"><div class="paper-index" style="color:var(--violet);background:rgba(181,140,255,.12)">05</div><div><h3>Twisting Lids Off with Two Hands</h3><a href="https://arxiv.org/abs/2403.02338" target="_blank" rel="noopener">arXiv:2403.02338 · CoRL 2024</a></div></div>
+        <p class="intro">这篇工作把“物体相对手旋转”改成“瓶盖相对瓶身旋转”。策略必须同时学会抓稳、在手中重定向、分配双手角色并积累相对角位移。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/twisting_lids_figure3_pipeline.png" target="_blank" title="点击查看 Twisting Lids Figure 3 原图"><img src="assets/paper_figures/twisting_lids_figure3_pipeline.png" alt="Twisting Lids 实时视觉感知与强化学习奖励设计" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 3｜Real-time perception and reward design。</strong>论文没有单独的全链路网络框图，因此选取最能解释算法实现的 Figure 3：左侧展示 RGB 分割、跟踪和深度关键点感知，右侧展示接触、相对旋转和瓶体姿态奖励。来源：<a href="https://arxiv.org/abs/2403.02338" target="_blank" rel="noopener">Lin et al., arXiv:2403.02338</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 视觉只保留关键点</h4><p>从 RGB mask 与深度估计瓶身、瓶盖中心，用低维状态缩小 Sim-to-Real 差距。</p></div><div class="panel"><h4>② 左右手接触职责分离</h4><p>参考接触点要求一只手围绕瓶身稳定，另一只手靠近盖子建立有效旋转接触。</p></div><div class="panel"><h4>③ 三个目标共同塑形</h4><p>Rotation 推进角位移，Contact 防止空转和掉落，Pose 保持瓶体轴线适合持续操作。</p></div></div>
+        </figure>
+        <div class="flow"><div class="node violet"><h4>Brake-link model</h4><small>用滑动关节压紧盖子，近似难模拟的静摩擦</small></div><div class="arrow">→</div><div class="node violet"><h4>Asymmetric PPO</h4><small>actor 用可部署观测，critic 使用 privileged state</small></div><div class="arrow">→</div><div class="node violet"><h4>Keypoint perception</h4><small>SAM + XMem + 深度，得到瓶身/瓶盖三维中心</small></div></div>
+        <div class="grid2"><div class="panel"><h4>观测与动作</h4><ul><li>双手关节位置、瓶身与瓶盖的估计三维中心、历史关节目标；</li><li>相对关节目标经过 EMA 平滑，再交给 PD；</li><li>真机为两只 16-DoF Allegro Hand，策略与感知 10 Hz。</li></ul></div><div class="panel"><h4>奖励塑形</h4><ul><li>Twisting reward：瓶盖每步相对角位移 Δθ；</li><li>Contact reward：左右指尖靠近各自瓶身/瓶盖参考点；</li><li>Pose reward：瓶体主轴对齐目标方向；</li><li>工作和动作惩罚，外加失败早停压缩探索空间。</li></ul></div></div>
+        <div class="callout red"><strong>与真实开瓶的边界：</strong>核心训练物体的盖子通过连续 revolute joint 可无限旋转，重点是双手协调与静摩擦，不等价于完整建模螺纹脱离。论文进一步探索了拧下盖子，但不要把“持续旋转角度”直接当作开盖成功率。</div>
+        <p>论文真机在 5 个定量对象中可稳定抓住全部对象，并能以合理速度旋转其中 3 个；最佳展示之一在 30 秒内平均完成约 4 圈。开放环回放明显失败，说明视觉关键点闭环和动作精度不可替代。</p>
+      </section>
+
+      <section id="dexscrew">
+        <div class="kicker">10 · Closest to DexGen screwdriver</div><div class="paper-head"><div class="paper-index" style="color:var(--red);background:rgba(255,113,133,.12)">06</div><div><h3>DexScrew：Learning Dexterous Manipulation Skills from Imperfect Simulations</h3><a href="https://arxiv.org/abs/2512.02011" target="_blank" rel="noopener">arXiv:2512.02011 · ICRA 2026</a></div></div>
+        <p class="intro">这篇与我们的 XHand 目标最接近：作者明确承认仿真没有螺纹和真实触觉，只让仿真负责产生 finger-rotation motion prior，再用真机数据学习最终闭环。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/dexscrew_figure1_pipeline.png" target="_blank" title="点击查看 DexScrew Figure 1 原图"><img src="assets/paper_figures/dexscrew_figure1_pipeline.png" alt="DexScrew 三阶段总体架构：仿真强化学习、技能辅助遥操作采集与多传感行为克隆" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 1｜Learning skills from imperfect simulations。</strong>左侧在简化仿真中学习旋转策略，中间把策略作为手指技能辅助人类采集真实多传感轨迹，右侧以真实数据训练最终 BC 策略。来源：<a href="https://arxiv.org/abs/2512.02011" target="_blank" rel="noopener">Hsieh et al., arXiv:2512.02011</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 仿真只学 motion prior</h4><p>简化 revolute object 不模拟螺纹，目标是先产生可用的旋转 finger gait。</p></div><div class="panel"><h4>② 人类只补高层腕部控制</h4><p>πRL 控制手指，人控制手臂与技能启停，显著降低灵巧示范采集难度。</p></div><div class="panel"><h4>③ 真机策略联合腕手</h4><p>最终 πBC 使用真实关节和触觉历史，输出协调的手指与手臂动作。</p></div></div>
+        </figure>
+        <h3>中文重构：三阶段职责与数据流</h3>
+        <div class="diagram">
+          <svg viewBox="0 0 1020 350" role="img" aria-label="DexScrew 三阶段训练流程" style="width:100%;height:auto">
+            <defs><marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#43c7ff"/></marker></defs>
+            <g font-family="Inter,Noto Sans SC,sans-serif" fill="#eef6fc">
+              <rect x="35" y="70" width="260" height="180" rx="18" fill="#10243a" stroke="#ff7185"/><text x="165" y="108" text-anchor="middle" font-weight="800">① Imperfect Simulation</text><text x="165" y="140" text-anchor="middle" fill="#93aabd" font-size="12">固定圆柱 + revolute joint</text><text x="165" y="163" text-anchor="middle" fill="#93aabd" font-size="12">厚三角螺母 / 球形柄近似</text><text x="165" y="194" text-anchor="middle" fill="#ff7185" font-size="13">PPO oracle → 本体 student</text><text x="165" y="220" text-anchor="middle" fill="#c5d6e3" font-size="12">产出：可循环的 finger gait</text>
+              <rect x="380" y="70" width="260" height="180" rx="18" fill="#10243a" stroke="#ffb44c"/><text x="510" y="108" text-anchor="middle" font-weight="800">② Skill-assisted Teleop</text><text x="510" y="140" text-anchor="middle" fill="#93aabd" font-size="12">RL 控制 12-DoF 手指</text><text x="510" y="163" text-anchor="middle" fill="#93aabd" font-size="12">人控制 UR5e 腕部 + 技能开关</text><text x="510" y="194" text-anchor="middle" fill="#ffb44c" font-size="13">采集关节 + 5 指原始触觉</text><text x="510" y="220" text-anchor="middle" fill="#c5d6e3" font-size="12">产出：成功真实轨迹</text>
+              <rect x="725" y="70" width="260" height="180" rx="18" fill="#10243a" stroke="#59dfae"/><text x="855" y="108" text-anchor="middle" font-weight="800">③ Multisensory BC</text><text x="855" y="140" text-anchor="middle" fill="#93aabd" font-size="12">K 步关节 + 触觉历史</text><text x="855" y="163" text-anchor="middle" fill="#93aabd" font-size="12">hourglass encoder / action prediction</text><text x="855" y="194" text-anchor="middle" fill="#59dfae" font-size="13">联合输出手指 + 手臂动作</text><text x="855" y="220" text-anchor="middle" fill="#c5d6e3" font-size="12">产出：自主闭环紧固策略</text>
+              <path d="M295 160H368M640 160H713" stroke="#43c7ff" stroke-width="2" marker-end="url(#arr2)"/>
+              <text x="510" y="305" text-anchor="middle" fill="#93aabd" font-size="13">仿真学“怎么动”　→　人类补“腕部如何跟随”　→　触觉策略学“何时纠偏”</text>
+            </g>
+          </svg>
+        </div>
+        <h3>Stage 1｜简化仿真 RL</h3>
+        <div class="grid2"><div class="panel"><h4>模型与训练</h4><ul><li>固定圆柱底座与螺母/工具柄通过 revolute joint 相连，故意忽略螺纹；</li><li>8,192 个 Isaac Gym 环境，仿真 200 Hz、控制 20 Hz、最长 40 秒；</li><li>12-DoF XHand，策略输出相对关节目标；</li><li>oracle privileged latent → 本体历史 latent predictor。</li></ul></div><div class="panel"><h4>奖励</h4><ul><li>目标轴角速度，裁剪到 [−4, 4] rad/s；</li><li>拇指/食指靠近对象的 proximity reward；</li><li>力矩、机械功、偏离初始手型惩罚；</li><li>过高角速度惩罚与失去接触/停滞早停。</li></ul></div></div>
+        <h3>Stage 2｜技能辅助遥操作采集</h3>
+        <p>RL 技能只控制手指，人用 Quest 控制器控制腕部位置、yaw/pitch，并决定何时触发旋转技能。每步记录 12 维手目标、6 维手臂关节目标、手臂/手关节状态，以及五个指尖的原始触觉。每指触觉阵列有 120 个 taxel，每个测三轴力。</p>
+        <h3>Stage 3｜带历史的触觉行为克隆</h3>
+        <p>把过去 K 步关节与触觉串联；触觉先经 MLP，融合特征经 hourglass encoder 输出手臂和手指动作。视觉未使用。时间历史用于判断旋转进度，触觉用于识别接触相位、滑移和轴线偏差，两者联合效果最强。</p>
+        <div class="metrics"><div class="metric"><b>41.6%</b><span>拧螺丝直接 Sim-to-Real 进度</span></div><div class="metric"><b>50.8%</b><span>专家轨迹开环回放进度</span></div><div class="metric"><b>95.0%</b><span>触觉 + 历史 BC 进度</span></div><div class="metric"><b>187.9 s</b><span>完整策略平均旋转时间</span></div></div>
+        <div class="callout green"><strong>最重要的工程结论：</strong>仿真策略不需要直接完成螺丝任务，它只需要强到足以成为数据采集 primitive。最终性能来自真实成功轨迹、腕手协同、触觉与历史闭环，而不是无限提高螺纹仿真精度。</div>
+      </section>
+
+      <section id="compare">
+        <div class="kicker">11 · Comparison</div><h2>横向比较：六种方法的控制链路</h2>
+        <div class="tablewrap"><table class="matrix"><thead><tr><th>维度</th><th>HORA</th><th>RotateIt</th><th>DexMani</th><th>PenSpin</th><th>Twisting Lids</th><th>DexScrew</th></tr></thead><tbody>
+          <tr><td><strong>任务形态</strong></td><td>单手自由连续旋转</td><td>单手多轴连续旋转</td><td>跨任务/跨手型连续旋转</td><td>单手动态转笔</td><td>双手相对旋转</td><td>单手+手臂紧固</td></tr>
+          <tr><td><strong>RL 算法</strong></td><td>PPO</td><td>PPO oracle</td><td>PPO base + residual</td><td>PPO oracle</td><td>Asymmetric PPO</td><td>PPO oracle/student</td></tr>
+          <tr><td><strong>部署观测</strong></td><td>本体历史</td><td>本体+深度+触觉</td><td>本体+RGB+手指级触觉</td><td>本体历史</td><td>本体+视觉关键点</td><td>本体+原始触觉历史</td></tr>
+          <tr><td><strong>动作</strong></td><td>关节位置目标</td><td>关节位置目标</td><td>名义动作+残差修正</td><td>相对位置目标</td><td>EMA 相对位置目标</td><td>相对位置目标；最终腕手联合</td></tr>
+          <tr><td><strong>关键指导</strong></td><td>目标轴角速度</td><td>角速度+非目标轴惩罚</td><td>人类接触条件可操作度演化能量</td><td>角速度+保持笔水平</td><td>角位移+接触点+轴对齐</td><td>角速度+接近+稳定正则</td></tr>
+          <tr><td><strong>Sim-to-Real</strong></td><td>RMA latent + 随机化</td><td>视触觉 latent distillation</td><td>冻结人类先验+随机化；无真机微调</td><td>仿真预训练+真实轨迹微调</td><td>随机化+关键点感知，零样本</td><td>技能遥操数据+多模态 BC</td></tr>
+          <tr><td><strong>最大风险</strong></td><td>只适合稳定初始抓取和 z 轴</td><td>传感器与分割链路复杂</td><td>依赖准确 Jacobian/接触与在线候选评分</td><td>初态和相位极敏感</td><td>双手硬件、静摩擦建模</td><td>数据采集慢，腕手时序耦合</td></tr>
+          <tr><td><strong>XHand 优先级</strong></td><td>A：基线</td><td>B：感知增强</td><td>A+：跨手型动作先验</td><td>B：展示支线</td><td>C：双手远期</td><td>A+：目标主线</td></tr>
+        </tbody></table></div>
+        <div class="callout warn"><strong>指标不可跨论文直接排名：</strong>这些论文使用不同机器人、物体、控制频率、初始状态和成功定义。表格用于比较系统设计，不用于宣称哪个方法“数值最好”。</div>
+      </section>
+
+      <section id="gait">
+        <div class="kicker">12 · Mechanism</div><h2>Finger gait 到底学到了什么</h2>
+        <p class="intro">它不是固定关节正弦波，而是一种接触状态机：始终保留足够支撑，再让一个或一组手指脱离、跨越运动学极限并重新建立可产生切向力的接触。</p>
+        <div class="flow four"><div class="node"><h4>推进</h4><small>若干手指施加切向力，物体开始转动</small></div><div class="arrow">→</div><div class="node green"><h4>支撑</h4><small>拇指或其他手指维持法向力与力闭合</small></div><div class="arrow">→</div><div class="node orange"><h4>换指</h4><small>达到关节极限的手指卸载、抬起、跨越</small></div><div class="arrow">→</div><div class="node violet"><h4>再接触</h4><small>新接触建立，角色切换并进入下一周期</small></div></div>
+        <div class="grid3"><div class="panel"><h4>相位来自历史</h4><p>单帧关节角难区分“正在滑移”还是“正准备换指”。时间窗口让策略隐式估计 gait phase。</p></div><div class="panel"><h4>模式受几何影响</h4><p>粗柄、细笔、三角螺母会诱导不同接触序列；因此训练几何不是无关紧要的外观变化。</p></div><div class="panel"><h4>触觉负责纠偏</h4><p>触觉不一定负责生成主运动，而是检测触点、滑移、偏载和失去啮合，触发重抓或腕部微调。</p></div></div>
+      </section>
+
+      <section id="xhand">
+        <div class="kicker">13 · XHand implementation</div><h2>建议落地路线：先证明 gait，再完成螺丝闭环</h2>
+        <div class="timeline">
+          <div class="event"><h4>P0｜XHand 单轴旋转基线</h4><p>使用圆柱/多边形手柄与稳定初始抓取，12 维相对关节目标、20 Hz 控制、PPO、域随机化。验收不是累计 reward，而是至少 3 个完整 gait 周期、对象不掉落、无关节撞限。</p></div>
+          <div class="event"><h4>P0｜把接触相位做成可观测指标</h4><p>记录每指接触二值、法向/切向力、关节速度、对象角速度和 gait phase；自动绘制 contact raster，确认策略在“交替换指”，而不是靠掌心摩擦作弊。</p></div>
+          <div class="event"><h4>P0｜离线复现 DexMani 可操作度描述</h4><p>基于 XHand FK、活动指尖 Jacobian、接触掩码和 grasp matrix 计算 6 维 log-Euclidean descriptor；对一条成功旋转轨迹画出可操作度演化，先验证它能区分推进、换指和不可恢复接触。</p></div>
+          <div class="event"><h4>P1｜工具柄与动作随机化</h4><p>加入圆柱、六边形、十二边形、软胶套和不同直径/惯量；随机 PD、摩擦、延迟、传感噪声。逐步加入工具轴倾斜惩罚。</p></div>
+          <div class="event"><h4>P1｜比较三种人类先验注入方式</h4><p>以相同 PPO 环境比较：无先验、直接 retarget action prior、DexMani-style manipulability prior。重点看样本效率、未见物体成功率和完整 gait 周期，而不只看最终 reward。</p></div>
+          <div class="event"><h4>P1｜技能辅助真机采集</h4><p>RL 控手指，操作者仅控制腕部位姿和技能触发。收集成功与恢复片段；明确标注滑移、脱离螺槽、手指撞限和腕轴偏差。</p></div>
+          <div class="event"><h4>P1｜触觉 + 历史 BC</h4><p>先用低维触觉特征验证价值：每指总力、力中心、切向/法向比、接触面积。与原始 taxel 网络并行对比，避免一开始把模型复杂度押在触觉图上。</p></div>
+          <div class="event"><h4>P2｜接入 DexGen shared autonomy</h4><p>将“旋转 gait”作为低层 skill，由高层遥操或任务策略给出旋转方向、目标速度、腕部轴线和启停；控制器负责稳定、换指与恢复。</p></div>
+        </div>
+        <h3>推荐的模块接口</h3>
+        <div class="formula">π<sub>skill</sub>(q<sub>t-K:t</sub>, a<sub>t-K:t-1</sub>, tactile<sub>t-K:t</sub>, g) → Δq<sub>hand</sub><br>g = {rotation_axis, direction, target_speed, enable, recovery_mode}</div>
+        <p>这样能把通用旋转趋势从具体任务解耦：螺丝、旋钮和瓶盖只需要不同的高层目标、腕部控制和接触终止条件，无需每个 demo 从零学习全部手指协调。</p>
+      </section>
+
+      <section id="demos">
+        <div class="kicker">14 · Demo portfolio</div><h2>可供同事继续发挥的“更酷 Demo”</h2>
+        <p class="intro">优先选择视觉效果强、技术增量明确、失败可控的演示。下面的顺序同时考虑工程成本与传播效果。</p>
+        <div class="grid3">
+          <div class="panel demo" data-rank="01"><span class="tag">低风险 / 高辨识度</span><h4>旋转调色盘旋钮</h4><p>手中连续转动带刻度大旋钮，改变灯光颜色或音量；实时叠加目标角度、实际角度和 contact gait。</p><div class="score" title="推荐度 5/5"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div></div>
+          <div class="panel demo" data-rank="02"><span class="tag">主线成果</span><h4>自主拧螺丝 + 扰动恢复</h4><p>中途人为反向转动或轻推工具，XHand 检测滑移后重新接触并继续紧固；比单纯成功视频更能体现学习闭环。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div></div>
+          <div class="panel demo" data-rank="03"><span class="tag">动态展示</span><h4>发光笔连续转动</h4><p>笔两端 LED 形成运动轨迹，视觉上直接呈现多圈旋转；从粗短棒 curriculum 到标准笔。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div></div>
+          <div class="panel demo" data-rank="04"><span class="tag">泛化</span><h4>工具柄盲测挑战</h4><p>随机提供圆柄、六角柄、泡棉柄和偏心柄，策略仅凭本体/触觉自适应换指节奏，展示域随机化价值。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div></div>
+          <div class="panel demo" data-rank="05"><span class="tag">产品感</span><h4>精密相机调焦 / 阀门调节</h4><p>视觉给目标读数，低层旋转 skill 负责连续小步转动；考察角度精度与轻触控制，不追求极限速度。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div></div>
+          <div class="panel demo" data-rank="06"><span class="tag">远期双手</span><h4>开瓶并倒水</h4><p>双手完成抓瓶、重定向、旋盖、分离、倒水的长时序技能；将 Twisting Lids 与高层技能链结合。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+          <div class="panel demo" data-rank="07"><span class="tag">接触切换</span><h4>魔方单层连续旋转</h4><p>一手固定核心，另一手做面层旋转；适合展示参考接触点、相对旋转和精确停止。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+          <div class="panel demo" data-rank="08"><span class="tag">双向控制</span><h4>钥匙插入后转动解锁</h4><p>视觉/力控负责插入，高层发出方向，旋转 skill 完成扭转与回中；能验证技能组合而非单一动作。</p><div class="score"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+          <div class="panel demo" data-rank="09"><span class="tag">精细操作</span><h4>滴定器 / 移液枪微调</h4><p>通过连续指尖旋转控制微小刻度，并以触觉检测终点扭矩，强调工业和实验室应用。</p><div class="score"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div></div>
+        </div>
+      </section>
+
+      <section id="evaluation">
+        <div class="kicker">15 · Evaluation</div><h2>评测不能只看“转了几圈”</h2>
+        <div class="tablewrap"><table><thead><tr><th>层级</th><th>建议指标</th><th>回答的问题</th></tr></thead><tbody>
+          <tr><td><strong>旋转能力</strong></td><td>目标轴累计角位移、平均/峰值角速度、非目标轴角速度</td><td>是否真正沿目标方向稳定旋转</td></tr>
+          <tr><td><strong>稳定性</strong></td><td>Time-to-Fall、物体平移漂移、工具轴倾角、掉落率</td><td>有没有用甩动或漂移换取 reward</td></tr>
+          <tr><td><strong>Gait 质量</strong></td><td>完整换指周期数、接触占空比、无支撑时间、撞限率</td><td>是否形成可循环而非一次性动作</td></tr>
+          <tr><td><strong>接触效率</strong></td><td>能耗、峰值力矩、法向/切向力、滑移次数</td><td>动作是否温和、可上真机</td></tr>
+          <tr><td><strong>任务进度</strong></td><td>紧固进度比、完成时间、最终扭矩、脱槽/滑牙次数</td><td>旋转是否转化为真实任务完成</td></tr>
+          <tr><td><strong>泛化</strong></td><td>未见直径/截面/质量/材质/扰动下成功率</td><td>策略是技能还是记住单一工装</td></tr>
+          <tr><td><strong>人机协同</strong></td><td>干预次数、操作者负担、恢复成功率、意图跟随误差</td><td>是否真的优于纯遥操作</td></tr>
+        </tbody></table></div>
+        <h3>最少必须做的消融</h3>
+        <ul class="check"><li>无 observation history vs. 有 history；</li><li>无触觉 vs. 低维触觉特征 vs. 原始 taxel；</li><li>无动作先验 vs. retarget action prior vs. manipulability-evolution prior；</li><li>直接 Sim-to-Real vs. 开环轨迹回放 vs. 真机数据微调/BC；</li><li>单一训练几何 vs. 多几何与域随机化；</li><li>仅角速度奖励 vs. 加入轴对齐、接近与平滑正则；</li><li>纯遥操作 vs. 技能辅助遥操作 vs. 自主闭环。</li></ul>
+      </section>
+
+      <section id="conclusion">
+        <div class="kicker">16 · Conclusion</div><h2>最终建议</h2>
+        <div class="grid3"><div class="panel"><span class="tag" style="color:var(--green)">近期</span><h4>用 HORA 验证 XHand 的旋转原语</h4><p>重点验证 contact gait 和历史状态建模，不要一开始背上视觉、螺纹和长时序任务的全部复杂度。</p></div><div class="panel"><span class="tag" style="color:var(--violet)">方法增量</span><h4>复现 DexMani 的跨形态先验</h4><p>先离线验证 XHand 接触条件可操作度，再将人类演化能量作为 PPO 探索 bias，比较其与直接动作重定向的差异。</p></div><div class="panel"><span class="tag" style="color:var(--orange)">主线</span><h4>采用 DexScrew 的“仿真先验 + 真机闭环”</h4><p>让 RL 技能降低数据采集门槛，让触觉历史 BC 完成腕手协调与真实接触补偿，再接入 DexGen 的共享自主框架。</p></div></div>
+        <div class="callout"><strong>一句话交接：</strong>把手内旋转理解为可复用的低层接触状态机；不同炫酷 Demo 的差别，主要在高层目标、对象约束、感知闭环和 Sim-to-Real 数据桥，而不是重新发明一套 finger gait。</div>
+      </section>
+    </main>
+  </div>
+
+  <footer><div class="shell">灵巧手灵巧操作调研 · 技术主线 03<br>资料截至 2026-08-11。论文数值按原文口径整理，不同硬件和评测协议不做绝对横向排名。</div></footer>
+  <script>
+    const links=[...document.querySelectorAll('.toc a')], sections=links.map(a=>document.querySelector(a.getAttribute('href')));
+    const obs=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){links.forEach(a=>a.classList.remove('active'));const i=sections.indexOf(e.target);if(i>=0)links[i].classList.add('active')}})},{rootMargin:'-20% 0px -68% 0px'});sections.forEach(s=>s&&obs.observe(s));
+  </script>
+</body>
+</html>

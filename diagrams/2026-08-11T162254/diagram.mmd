@@ -1,0 +1,21 @@
+stateDiagram-v2
+  direction TB
+
+  state "旋转模式" as ROTATE {
+    direction LR
+    [*] --> CW
+    CW --> CCW: 切换为 CCW
+    CCW --> CW: 切换为 CW
+  }
+
+  state "HOLD（停止保持）" as HOLD
+
+  [*] --> ROTATE
+  ROTATE --> HOLD: 完全张掌持续 1 秒
+  HOLD --> ROTATE: 恢复抓握约 0.2 秒，返回原方向
+
+  note right of HOLD
+    锁存当前 PD target
+    绕过 Diffusion / IDM
+    保持夹持，不随张手松开
+  end note

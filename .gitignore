@@ -13,3 +13,8 @@ ckpts_cloud/
 build/
 outputs/
 .xbot_test_overlay/
+
+# Local agent/plugin state and expired Feishu authorization artifacts.
+.agents/
+skills-lock.json
+dexgen/docs/feishu-*-qr.png

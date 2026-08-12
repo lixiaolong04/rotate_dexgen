@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DexGen：基于生成式动作模型的灵巧手手内旋转</title>
+  <style>
+    :root {
+      --ink:#172033; --muted:#556176; --faint:#8792a6; --line:#dfe5ee;
+      --blue:#2f66d0; --blue-soft:#edf3ff; --cyan:#087f8c; --cyan-soft:#eaf8f8;
+      --orange:#c56a16; --orange-soft:#fff5e8; --green:#267a53; --green-soft:#eaf7f0;
+      --purple:#7251b5; --purple-soft:#f3effc; --red:#b54848; --red-soft:#fff0f0;
+      --panel:#f7f9fc; --white:#fff;
+    }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body {
+      margin:0; color:var(--ink); background:#fff; line-height:1.78; font-size:16px;
+      font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",-apple-system,BlinkMacSystemFont,sans-serif;
+    }
+    .page { width:min(100% - 40px, 980px); margin:0 auto; padding-bottom:80px; }
+    .hero { padding:66px 0 42px; border-bottom:1px solid var(--line); }
+    .kicker { color:var(--blue); font-size:13px; font-weight:700; letter-spacing:.12em; }
+    h1 { margin:9px 0 16px; font-size:37px; line-height:1.28; letter-spacing:-.02em; }
+    .lead { margin:0; max-width:850px; font-size:19px; color:var(--muted); }
+    .lead strong { color:var(--ink); }
+    .chips { display:flex; flex-wrap:wrap; gap:10px; margin-top:27px; }
+    .chip { min-width:132px; padding:10px 14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); text-align:center; }
+    .chip b { display:block; color:var(--blue); font-size:20px; line-height:1.25; }
+    .chip span { color:var(--faint); font-size:12px; }
+    .hero-note { margin-top:26px; padding:15px 18px; background:var(--blue-soft); border-left:4px solid var(--blue); border-radius:0 9px 9px 0; color:var(--muted); font-size:14.5px; }
+
+    .toc { margin:34px 0 0; padding:20px 22px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+    .toc-title { margin-bottom:8px; font-weight:700; }
+    .toc-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 28px; }
+    .toc a { color:var(--muted); text-decoration:none; font-size:14px; }
+    .toc a:hover { color:var(--blue); }
+
+    section { padding-top:58px; }
+    h2 { margin:0 0 6px; font-size:26px; line-height:1.35; }
+    h2 .no { display:inline-block; min-width:42px; color:var(--blue); font-variant-numeric:tabular-nums; }
+    .subtitle { margin:0 0 23px; color:var(--faint); font-size:14.5px; }
+    h3 { margin:30px 0 9px; font-size:19px; }
+    h4 { margin:0 0 6px; font-size:15.5px; }
+    p { margin:9px 0; color:var(--muted); }
+    strong { color:var(--ink); }
+    ul,ol { margin:10px 0; padding-left:1.45em; color:var(--muted); }
+    li { margin:5px 0; }
+    code { padding:1px 6px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:#9b3e45; font-size:.88em; }
+    .small { color:var(--faint); font-size:13px; }
+
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(225px,1fr)); gap:14px; margin-top:18px; }
+    .card { padding:18px 19px; border:1px solid var(--line); border-radius:11px; background:#fff; }
+    .card p { margin:0; font-size:14px; line-height:1.65; }
+    .tag { display:inline-block; margin-right:7px; padding:1px 8px; border-radius:5px; background:var(--blue-soft); color:var(--blue); font-size:12px; font-weight:700; }
+    .tag.green { background:var(--green-soft); color:var(--green); }
+    .tag.orange { background:var(--orange-soft); color:var(--orange); }
+    .tag.purple { background:var(--purple-soft); color:var(--purple); }
+
+    .callout { margin:18px 0; padding:14px 18px; border-left:4px solid var(--blue); border-radius:0 9px 9px 0; background:var(--blue-soft); color:var(--muted); font-size:14.5px; }
+    .callout.teal { border-left-color:var(--cyan); background:var(--cyan-soft); }
+    .callout.orange { border-left-color:var(--orange); background:var(--orange-soft); }
+    .callout.red { border-left-color:var(--red); background:var(--red-soft); }
+
+    .flow { display:flex; align-items:stretch; gap:26px; margin:24px 0 8px; overflow-x:auto; padding:2px 1px 8px; }
+    .flow-step { flex:1 0 160px; min-width:160px; padding:15px 14px; border:1px solid var(--line); border-radius:11px; background:var(--panel); position:relative; }
+    .flow-step::after { content:"→"; position:absolute; right:-21px; top:50%; transform:translateY(-50%); color:var(--faint); font-size:20px; }
+    .flow-step:last-child::after { content:""; }
+    .flow-step .step-no { color:var(--blue); font-size:11px; font-weight:800; letter-spacing:.08em; }
+    .flow-step .step-title { margin:3px 0 5px; color:var(--ink); font-size:15px; font-weight:700; }
+    .flow-step .step-desc { color:var(--muted); font-size:12.5px; line-height:1.55; }
+
+    .diagram { margin:22px 0; padding:15px; border:1px solid var(--line); border-radius:13px; background:var(--panel); overflow-x:auto; }
+    .diagram svg { display:block; min-width:760px; width:100%; height:auto; margin:0 auto; }
+    .caption { margin:8px 0 0; color:var(--faint); font-size:13px; text-align:center; }
+
+    .formula { margin:16px 0; padding:15px 18px; border:1px solid var(--line); border-radius:9px; background:var(--panel); font-family:"Times New Roman","Songti SC",serif; color:var(--ink); font-size:17px; text-align:center; overflow-x:auto; }
+    .formula .explain { display:block; margin-top:7px; font-family:"PingFang SC","Microsoft YaHei",sans-serif; color:var(--faint); font-size:12.5px; }
+
+    .table-wrap { overflow-x:auto; margin:15px 0; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th,td { padding:9px 12px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { background:var(--panel); color:var(--ink); font-weight:700; white-space:nowrap; }
+    td { color:var(--muted); }
+    td.num { white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .good { color:var(--green); font-weight:700; }
+
+    .split { display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; margin-top:18px; }
+    .panel { padding:19px; border:1px solid var(--line); border-radius:11px; background:var(--panel); }
+    .panel h3 { margin:0 0 8px; font-size:17px; }
+    .panel p,.panel li { font-size:14px; }
+
+    .media { margin:22px auto 0; max-width:430px; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:#111; box-shadow:0 8px 24px rgba(23,32,51,.12); }
+    .media img { display:block; width:100%; max-height:620px; object-fit:contain; }
+
+    .timeline { margin:20px 0 0 9px; padding-left:25px; border-left:2px solid var(--line); }
+    .timeline-item { position:relative; padding:0 0 22px; }
+    .timeline-item::before { content:""; position:absolute; left:-31px; top:7px; width:10px; height:10px; border-radius:50%; background:var(--blue); border:2px solid #fff; box-shadow:0 0 0 2px var(--blue-soft); }
+    .timeline-item b { display:block; font-size:14.5px; }
+    .timeline-item span { color:var(--muted); font-size:14px; }
+    footer { margin-top:70px; padding-top:22px; border-top:1px solid var(--line); color:var(--faint); font-size:13px; }
+
+    @media (max-width:720px) {
+      .page { width:min(100% - 26px,980px); }
+      h1 { font-size:30px; }
+      .toc-grid,.split { grid-template-columns:1fr; }
+      .flow { gap:24px; }
+    }
+    @media print {
+      .page { width:100%; max-width:980px; }
+      .hero { padding-top:20px; }
+      section { padding-top:36px; break-inside:auto; }
+      .card,.panel,.diagram,.callout,table { break-inside:avoid; }
+      .toc { display:none; }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+  <header class="hero">
+    <div class="kicker">DEXTEROUS MANIPULATION · GENERATIVE CONTROL · SIM-TO-REAL</div>
+    <h1>DexGen：基于生成式动作模型的<br>灵巧手手内旋转</h1>
+    <p class="lead">以已经训练好的顺时针/逆时针强化学习专家为数据来源，学习<strong>关键点空间的动作生成模型</strong>与<strong>机器人关节控制映射</strong>，最终在 XHand1 Pro 真机上实现由 MANUS 手套控制的<strong>正转、反转与停止保持</strong>。</p>
+    <div class="chips">
+      <div class="chip"><b>21 DoF</b><span>XHand 关节自由度</span></div>
+      <div class="chip"><b>10 Keypoints</b><span>统一动作表征</span></div>
+      <div class="chip"><b>83-D State</b><span>本体状态 + 触觉</span></div>
+      <div class="chip"><b>0.1 / 0.2 s</b><span>预测时间点</span></div>
+      <div class="chip"><b>10 Hz</b><span>生成规划频率</span></div>
+      <div class="chip"><b>CW / CCW / HOLD</b><span>人机交互指令</span></div>
+    </div>
+    <div class="hero-note"><strong>一句话概括：</strong>强化学习专家负责“教会系统如何稳定旋转”，Diffusion 负责“生成下一段手指关键点运动”，IDM 负责“把运动意图翻译成 XHand 可执行的关节目标”，MANUS 负责“告诉系统向哪转、何时停”。</div>
+  </header>
+
+  <nav class="toc">
+    <div class="toc-title">文档目录</div>
+    <div class="toc-grid">
+      <a href="#s1">一、项目目标：完成了什么</a>
+      <a href="#s2">二、为什么手内旋转难</a>
+      <a href="#s3">三、技术路线总览</a>
+      <a href="#s4">四、上游专家：强化学习策略</a>
+      <a href="#s5">五、从专家到数据：轨迹采集</a>
+      <a href="#s6">六、DexGen 算法：Diffusion + IDM</a>
+      <a href="#s7">七、鲁棒性：触觉与主动恢复</a>
+      <a href="#s8">八、MANUS 人机交互与状态机</a>
+      <a href="#s9">九、从仿真到真机：关键对齐</a>
+      <a href="#s10">十、结果、沉淀与展望</a>
+    </div>
+  </nav>
+
+  <section id="s1">
+    <h2><span class="no">01</span>项目目标：完成了什么</h2>
+    <p class="subtitle">从单一自主策略，扩展为可交互、可生成、可部署的灵巧操作系统。</p>
+    <p>本项目面向 XHand1 Pro 的圆柱物体手内旋转任务。上游工作已经通过强化学习获得可稳定执行顺时针（CW）和逆时针（CCW）旋转的专家策略；本阶段在此基础上跑通 DexGen pipeline，将专家行为转化为可学习的轨迹数据，再训练生成式动作模型与学习式逆动力学模型，并接入 MANUS 手套和真机控制栈。</p>
+    <div class="cards">
+      <div class="card"><h4><span class="tag">数据</span>双向专家轨迹</h4><p>冻结 CW/CCW RL 专家，采集关节、PD target、关键点、触觉、物体状态、奖励和终止信息。</p></div>
+      <div class="card"><h4><span class="tag green">生成</span>关键点运动规划</h4><p>条件 Diffusion 根据当前状态、历史、方向和可选 guidance，生成未来两帧十个关键点的运动。</p></div>
+      <div class="card"><h4><span class="tag purple">控制</span>关节目标映射</h4><p>IDM 将关键点运动转换为 21 维绝对 PD target，使生成结果能够驱动 XHand。</p></div>
+      <div class="card"><h4><span class="tag orange">交互</span>MANUS 三态控制</h4><p>利用手套输入实现 CW、CCW 和 HOLD；HOLD 锁存机器人当前姿态，不会张手掉物。</p></div>
+    </div>
+    <div class="callout"><strong>项目边界：</strong>DexGen 不是新的 RL 策略。RL 专家是行为数据的来源；DexGen 学习专家运动分布，并提供关键点空间生成、外部 guidance 和人机交互能力。</div>
+  </section>
+
+  <section id="s2">
+    <h2><span class="no">02</span>为什么手内旋转难，而且值得做</h2>
+    <p class="subtitle">它同时考验接触控制、部分可观测性、长时稳定性和 Sim-to-Real。</p>
+    <div class="cards">
+      <div class="card"><h4>多点接触持续切换</h4><p>五指需要交替松开、重抓和施力。接触点、摩擦状态和受力平衡持续变化，很难用固定轨迹或解析模型精确描述。</p></div>
+      <div class="card"><h4>物体状态不可直接观测</h4><p>物体被手掌遮挡，部署状态主要依赖关节本体感知与五指触觉。策略需要从短时历史中推断滑移和接触变化。</p></div>
+      <div class="card"><h4>旋转与抓稳相互制约</h4><p>握得过紧，物体无法转动；握得过松，物体会掉落。持续旋转需要不断在推进和稳定之间动态权衡。</p></div>
+      <div class="card"><h4>误差会在长时运行中积累</h4><p>单步误差很小，也可能在几十秒后演变为错向旋转、接触丢失或物体掉落，因此必须用闭环指标而非只看训练 loss。</p></div>
+      <div class="card"><h4>仿真与现实的接触鸿沟</h4><p>摩擦、软指尖、执行延迟、传感器偏置和电机响应难以完全建模，是灵巧手 Sim-to-Real 中最敏感的一类任务。</p></div>
+      <div class="card"><h4>交互命令不能破坏稳定性</h4><p>方向切换与停止不能直接粗暴覆盖关节动作，尤其 HOLD 必须保持夹持，而不是照搬操作者张手姿态。</p></div>
+    </div>
+  </section>
+
+  <section id="s3">
+    <h2><span class="no">03</span>技术路线总览</h2>
+    <p class="subtitle">完整链路分为专家获取、数据构造、生成建模、闭环验证和真机交互五个阶段。</p>
+    <div class="flow">
+      <div class="flow-step"><div class="step-no">STAGE 1</div><div class="step-title">RL 专家</div><div class="step-desc">PPO Teacher + ProprioAdapt Student，分别获得 CW/CCW 稳定旋转策略</div></div>
+      <div class="flow-step"><div class="step-no">STAGE 2</div><div class="step-title">轨迹采集</div><div class="step-desc">专家 rollout，构造稳定旋转数据与主动扰动恢复数据</div></div>
+      <div class="flow-step"><div class="step-no">STAGE 3</div><div class="step-title">Diffusion</div><div class="step-desc">在关键点空间生成未来 0.1 s / 0.2 s 的动作计划</div></div>
+      <div class="flow-step"><div class="step-no">STAGE 4</div><div class="step-title">IDM</div><div class="step-desc">把关键点运动映射为 21 维绝对关节 PD target</div></div>
+      <div class="flow-step"><div class="step-no">STAGE 5</div><div class="step-title">交互部署</div><div class="step-desc">Isaac 闭环验证，接入 MANUS，部署到真实 XHand</div></div>
+    </div>
+
+    <div class="diagram">
+      <svg viewBox="0 0 930 455" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+        <defs><marker id="arrowA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#8792a6"/></marker></defs>
+        <rect x="18" y="22" width="894" height="410" rx="16" fill="#fff" stroke="#dfe5ee"/>
+        <text x="45" y="55" font-size="13" font-weight="700" fill="#2f66d0">OFFLINE · 专家数据与模型训练</text>
+        <rect x="48" y="78" width="160" height="78" rx="11" fill="#edf3ff" stroke="#2f66d0"/>
+        <text x="128" y="106" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">CW / CCW RL 专家</text><text x="128" y="130" text-anchor="middle" font-size="12" fill="#556176">冻结 Student 策略 rollout</text>
+        <rect x="270" y="78" width="170" height="78" rx="11" fill="#fff5e8" stroke="#c56a16"/>
+        <text x="355" y="106" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">轨迹数据集</text><text x="355" y="130" text-anchor="middle" font-size="12" fill="#556176">稳定旋转 + 主动恢复</text>
+        <rect x="502" y="78" width="170" height="78" rx="11" fill="#f3effc" stroke="#7251b5"/>
+        <text x="587" y="106" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">Guided Diffusion</text><text x="587" y="130" text-anchor="middle" font-size="12" fill="#556176">未来关键点 motion</text>
+        <rect x="734" y="78" width="150" height="78" rx="11" fill="#eaf8f8" stroke="#087f8c"/>
+        <text x="809" y="106" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">IDM</text><text x="809" y="130" text-anchor="middle" font-size="12" fill="#556176">21-D PD target</text>
+        <path d="M208 117H266M440 117H498M672 117H730" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowA)"/>
+
+        <line x1="45" y1="187" x2="885" y2="187" stroke="#dfe5ee" stroke-dasharray="5 5"/>
+        <text x="45" y="218" font-size="13" font-weight="700" fill="#267a53">ONLINE · 10 Hz 生成规划 + 20 Hz 底层闭环</text>
+        <rect x="48" y="245" width="145" height="78" rx="11" fill="#eaf7f0" stroke="#267a53"/>
+        <text x="120" y="273" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">83-D 状态</text><text x="120" y="297" text-anchor="middle" font-size="12" fill="#556176">本体 + 五指触觉</text>
+        <rect x="248" y="245" width="145" height="78" rx="11" fill="#edf3ff" stroke="#2f66d0"/>
+        <text x="320" y="273" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">方向 / Guidance</text><text x="320" y="297" text-anchor="middle" font-size="12" fill="#556176">CW · CCW · MANUS</text>
+        <rect x="448" y="245" width="145" height="78" rx="11" fill="#f3effc" stroke="#7251b5"/>
+        <text x="520" y="273" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">Diffusion</text><text x="520" y="297" text-anchor="middle" font-size="12" fill="#556176">2 × 10 × 3 motion</text>
+        <rect x="648" y="245" width="110" height="78" rx="11" fill="#eaf8f8" stroke="#087f8c"/>
+        <text x="703" y="273" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">IDM</text><text x="703" y="297" text-anchor="middle" font-size="12" fill="#556176">21-D target</text>
+        <rect x="813" y="245" width="76" height="78" rx="11" fill="#fff5e8" stroke="#c56a16"/>
+        <text x="851" y="272" text-anchor="middle" font-size="14" font-weight="700" fill="#172033">XHand</text><text x="851" y="296" text-anchor="middle" font-size="11" fill="#556176">PD 执行</text>
+        <path d="M193 284H244M393 284H444M593 284H644M758 284H809" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowA)"/>
+        <path d="M851 325V378H120V327" fill="none" stroke="#267a53" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrowA)"/>
+        <text x="488" y="400" text-anchor="middle" font-size="12" fill="#267a53">执行后的关节状态与触觉回到下一周期，形成闭环</text>
+      </svg>
+      <p class="caption">图 1：DexGen 离线训练与在线闭环的完整数据流（适合直接截图插入飞书）</p>
+    </div>
+  </section>
+
+  <section id="s4">
+    <h2><span class="no">04</span>上游专家：强化学习策略从哪里来</h2>
+    <p class="subtitle">先用强化学习解决“如何转”，再用 DexGen 学习和重组专家行为。</p>
+    <h3>4.1 任务形式化：观测、动作与目标</h3>
+    <p>上游旋转策略运行在 NVIDIA Isaac Sim / IsaacLab 中。机器人为 21 自由度 XHand，策略输出每个关节的动作目标，底层由显式 PD 控制执行。训练目标是在保持物体不掉落的同时，沿指定方向持续产生有向角速度，并抑制物体平移、无效能耗和剧烈动作。</p>
+    <div class="split">
+      <div class="panel"><h3>策略可获得的信息</h3><ul><li>关节角、历史动作目标等本体状态</li><li>五指触觉标量及其时间变化</li><li>Teacher 训练阶段可使用物体和物理参数等特权信息</li></ul></div>
+      <div class="panel"><h3>策略需要输出的行为</h3><ul><li>21 维关节动作 / 目标</li><li>连续换指和接触重建</li><li>朝 CW 或 CCW 的稳定有向旋转</li><li>遇到滑移和扰动时重新抓稳</li></ul></div>
+    </div>
+
+    <h3>4.2 Teacher：特权信息强化学习（PPO）</h3>
+    <p>Teacher 在大规模并行仿真中通过 PPO 试错学习。训练时可访问真机上难以直接获得的物体状态与物理参数，因此能够更快形成有效的旋转行为。Actor 决定动作，Critic 评估长期回报，PPO 的裁剪目标限制策略单次更新幅度，提升高维接触任务中的训练稳定性。</p>
+    <div class="formula">L<sup>CLIP</sup>(θ) = E[min(r<sub>t</sub>(θ)Â<sub>t</sub>, clip(r<sub>t</sub>(θ),1−ε,1+ε)Â<sub>t</sub>)]<span class="explain">策略更新既追求更高回报，又避免一次更新偏离旧策略过远。</span></div>
+
+    <h3>4.3 域随机化：鲁棒性的来源</h3>
+    <p>训练时随机化物体尺度、质量、质心、摩擦、重力方向、执行器和传感器相关参数，让策略在每个 episode 面对略有不同的“世界”。这相当于训练一组对物理误差不敏感的行为，而不是记住单一仿真参数。</p>
+    <div class="callout teal"><strong>核心思想：</strong>现实参数不可能被完全测准，与其追求一个完美仿真，不如让策略在足够宽的参数分布上学会自适应。</div>
+
+    <h3>4.4 Student：隐状态回归蒸馏</h3>
+    <p>Teacher 能看到特权信息，但真机部署看不到。ProprioAdapt Student 只使用真实系统可获得的本体状态与触觉历史，通过时序网络推断隐含的物体与动力学状态，并模仿 Teacher 动作。最终用于 DexGen 轨迹采集的是已训练好的 Student 专家。</p>
+    <div class="table-wrap"><table><tr><th>方向</th><th>专家权重</th><th>用途</th></tr><tr><td><strong>CW（顺时针）</strong></td><td><code>student_9402.pth</code></td><td>采集 CW 稳定旋转与恢复轨迹</td></tr><tr><td><strong>CCW（逆时针）</strong></td><td><code>student_9503.pth</code></td><td>采集 CCW 稳定旋转与恢复轨迹</td></tr></table></div>
+    <div class="callout orange"><strong>方向契约不可破坏：</strong>CW/CCW 标签和专家权重不能互换。采集器会检查有向转速符号；方向错误的数据会直接污染后续条件生成模型。</div>
+  </section>
+
+  <section id="s5">
+    <h2><span class="no">05</span>从专家到数据：轨迹如何构造</h2>
+    <p class="subtitle">专家 rollout 不只是录动作，而是保存可用于生成、逆动力学与恢复学习的完整时序。</p>
+    <h3>5.1 为什么选择十个手部关键点</h3>
+    <p>直接在 21 维关节空间学习，会把 XHand 特定的关节结构绑定到生成模型。项目使用腕坐标系下的十个关键点——五个 PIP 点和五个指尖胶垫点——作为中间动作表征，既保留抓取几何，又更接近“手指要移动到哪里”的任务语义。</p>
+    <div class="diagram">
+      <svg viewBox="0 0 900 250" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+        <defs><marker id="arrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#8792a6"/></marker></defs>
+        <rect x="35" y="52" width="190" height="140" rx="13" fill="#edf3ff" stroke="#2f66d0"/>
+        <text x="130" y="83" text-anchor="middle" font-size="16" font-weight="700" fill="#172033">XHand 关节空间</text><text x="130" y="112" text-anchor="middle" font-size="13" fill="#556176">21 维关节姿态</text><text x="130" y="135" text-anchor="middle" font-size="13" fill="#556176">机器人结构相关</text><text x="130" y="165" text-anchor="middle" font-size="12" fill="#8792a6">精确 FK</text>
+        <rect x="355" y="35" width="190" height="174" rx="13" fill="#f3effc" stroke="#7251b5"/>
+        <text x="450" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#172033">关键点动作空间</text><text x="450" y="98" text-anchor="middle" font-size="13" fill="#556176">5 × PIP</text><text x="450" y="122" text-anchor="middle" font-size="13" fill="#556176">5 × 指尖胶垫</text><text x="450" y="151" text-anchor="middle" font-size="13" fill="#556176">腕坐标系 10 × 3</text><text x="450" y="181" text-anchor="middle" font-size="12" fill="#7251b5">Diffusion 在此生成</text>
+        <rect x="675" y="52" width="190" height="140" rx="13" fill="#eaf8f8" stroke="#087f8c"/>
+        <text x="770" y="83" text-anchor="middle" font-size="16" font-weight="700" fill="#172033">可执行关节目标</text><text x="770" y="112" text-anchor="middle" font-size="13" fill="#556176">21 维绝对 PD target</text><text x="770" y="135" text-anchor="middle" font-size="13" fill="#556176">IDM 学习映射</text><text x="770" y="165" text-anchor="middle" font-size="12" fill="#087f8c">发送给 XHand</text>
+        <path d="M225 122H350M545 122H670" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowB)"/><text x="287" y="108" text-anchor="middle" font-size="12" fill="#8792a6">FK</text><text x="608" y="108" text-anchor="middle" font-size="12" fill="#8792a6">IDM</text>
+      </svg>
+      <p class="caption">图 2：关键点表征将“动作生成”和“机器人关节执行”解耦</p>
+    </div>
+
+    <h3>5.2 每条轨迹记录什么</h3>
+    <div class="table-wrap"><table>
+      <tr><th>数据类别</th><th>主要字段</th><th>训练用途</th></tr>
+      <tr><td>本体状态</td><td>关节状态、历史 PD target 等</td><td>构造 78 维基础状态和 4 帧历史</td></tr>
+      <tr><td>动作监督</td><td>21 维绝对 PD target</td><td>IDM 的监督目标</td></tr>
+      <tr><td>几何运动</td><td>十个关键点及未来位移</td><td>Diffusion 目标、IDM 条件</td></tr>
+      <tr><td>接触信息</td><td>五指触觉标量、接触指数量</td><td>触觉条件、恢复判定</td></tr>
+      <tr><td>任务信息</td><td>物体状态、reward、终止类型、方向</td><td>审计、切分与闭环指标</td></tr>
+      <tr><td>恢复标签</td><td>扰动类型、扰动阶段、恢复是否成功</td><td>主动恢复重采样</td></tr>
+    </table></div>
+
+    <h3>5.3 两类互补数据</h3>
+    <div class="split">
+      <div class="panel"><h3>稳定连续旋转主分布</h3><p><code>large_modes_v5</code></p><ul><li>记录专家正常 CW/CCW 旋转</li><li>保持流畅运动与长期旋转能力</li><li>是模型学习主体行为的基础数据</li></ul></div>
+      <div class="panel"><h3>主动扰动恢复增强</h3><p><code>recovery_modes_v6</code></p><ul><li>注入 action bias、单指释放、物体外力</li><li>扰动动作本身不作为监督</li><li>只学习干净专家随后如何恢复</li></ul></div>
+    </div>
+    <p>训练时每个方向约 25% 采样明确成功恢复窗口，75% 保持普通旋转窗口。恢复数据只能作为增强，不能替代稳定数据，否则模型可能只会“救险”而失去连续旋转的主分布。</p>
+  </section>
+
+  <section id="s6">
+    <h2><span class="no">06</span>DexGen 核心算法：Diffusion + IDM</h2>
+    <p class="subtitle">一个模型负责“想动作”，另一个模型负责“把动作变成关节控制”。</p>
+    <h3>6.1 输入、输出与时间尺度</h3>
+    <div class="table-wrap"><table>
+      <tr><th>模块</th><th>输入</th><th>输出</th><th>频率 / 时间</th></tr>
+      <tr><td><strong>Diffusion</strong></td><td>4 帧历史状态、方向、触觉、可选 guidance</td><td>未来两帧 <code>[10,3]</code> 关键点 motion</td><td>10 Hz；预测 0.1 s / 0.2 s</td></tr>
+      <tr><td><strong>IDM</strong></td><td>当前状态 + 关键点 motion</td><td>21 维绝对 PD target</td><td>每个规划周期生成下一目标</td></tr>
+      <tr><td><strong>底层控制</strong></td><td>关节状态 + 绝对 PD target</td><td>执行器控制量</td><td>任务频率 20 Hz</td></tr>
+    </table></div>
+
+    <h3>6.2 Guided Diffusion：生成未来关键点运动</h3>
+    <p>Diffusion 不直接一次性回归唯一动作，而是学习专家关键点运动的条件分布。训练时逐步给真实运动加入高斯噪声，网络学习在给定状态和方向条件下预测噪声；推理时从噪声出发迭代去噪，得到符合专家分布的未来运动序列。</p>
+    <div class="formula">x<sub>t</sub> = √ᾱ<sub>t</sub>x<sub>0</sub> + √(1−ᾱ<sub>t</sub>)ε，&nbsp;&nbsp; L = E[‖ε − ε<sub>θ</sub>(x<sub>t</sub>, t, c)‖²]<span class="explain">x₀ 为真实关键点 motion，c 包含状态历史、CW/CCW 方向、触觉以及可选外部 guidance。</span></div>
+    <p>正式配置使用 100 个 diffusion steps、cosine noise schedule 和 epsilon prediction；在线通过 DDIM 缩短采样，默认可使用 25 步，在速度和生成质量之间折中。</p>
+    <div class="callout teal"><strong>为什么使用 Diffusion：</strong>同一个接触状态往往存在多种有效换指动作。生成模型可以表达“多种都合理”的动作分布，并允许在采样时加入方向或 MANUS 关键点 guidance，而不是被单一均值动作限制。</div>
+
+    <h3>6.3 Guidance：在专家分布内引导动作</h3>
+    <p>MANUS 或 noisy-RL 可以给出十个关键点希望移动的方向。采样过程中将该目标转成 guidance cost 的梯度，引导生成结果接近命令，同时保留模型从专家数据中学到的稳定抓取先验。</p>
+    <div class="formula">x<sup>*</sup> = arg min<sub>x</sub> [ E<sub>diffusion</sub>(x | state, mode) + λ · ‖x − x<sub>command</sub>‖² ]<span class="explain">λ 控制服从外部命令与保持专家运动先验之间的权衡。</span></div>
+
+    <h3>6.4 IDM：从关键点运动到 21 维关节目标</h3>
+    <p>IDM（Inverse Dynamics Model）接收机器人当前状态与未来关键点运动，预测下一规划时刻的 21 维绝对 PD target。它学习了“为了实现这段指尖/PIP 运动，XHand 各关节应到达什么目标”的映射。</p>
+    <div class="callout red"><strong>术语说明：</strong>项目交流中有时把 IDM 称为“逆运动学模型”，但它不是只根据几何求解关节角的传统解析 IK。它是从专家数据监督学习的<strong>逆动力学/动作映射模型</strong>，条件中还包含当前状态与时序信息。</div>
+
+    <h3>6.5 为什么先训练 IDM，再训练 Diffusion</h3>
+    <ol><li>先把数据中的真实未来关键点 motion 输入 IDM，检查 21 维 target 是否能够准确重建。</li><li>若 oracle motion → IDM 误差较小，说明关键点表征和关节映射成立。</li><li>再训练 Diffusion，并检查 Diffusion motion → IDM 的串联误差。</li><li>最后进入 Isaac 闭环，区分生成误差、IDM 误差和真实执行跟踪误差。</li></ol>
+    <div class="diagram">
+      <svg viewBox="0 0 900 205" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+        <defs><marker id="arrowC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#8792a6"/></marker></defs>
+        <rect x="28" y="58" width="160" height="88" rx="12" fill="#edf3ff" stroke="#2f66d0"/><text x="108" y="88" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">真实 future motion</text><text x="108" y="115" text-anchor="middle" font-size="12" fill="#556176">Oracle 隔离测试</text>
+        <rect x="263" y="58" width="130" height="88" rx="12" fill="#eaf8f8" stroke="#087f8c"/><text x="328" y="99" text-anchor="middle" font-size="16" font-weight="700" fill="#172033">IDM</text><text x="328" y="123" text-anchor="middle" font-size="12" fill="#556176">先验收</text>
+        <rect x="468" y="58" width="160" height="88" rx="12" fill="#f3effc" stroke="#7251b5"/><text x="548" y="88" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">Diffusion motion</text><text x="548" y="115" text-anchor="middle" font-size="12" fill="#556176">串联离线评估</text>
+        <rect x="703" y="58" width="168" height="88" rx="12" fill="#eaf7f0" stroke="#267a53"/><text x="787" y="88" text-anchor="middle" font-size="15" font-weight="700" fill="#172033">Isaac / 真机闭环</text><text x="787" y="115" text-anchor="middle" font-size="12" fill="#556176">最终行为指标</text>
+        <path d="M188 102H259M393 102H464M628 102H699" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowC)"/>
+        <text x="225" y="90" text-anchor="middle" font-size="11" fill="#8792a6">target MAE</text><text x="430" y="90" text-anchor="middle" font-size="11" fill="#8792a6">替换输入</text><text x="665" y="90" text-anchor="middle" font-size="11" fill="#8792a6">闭环执行</text>
+      </svg>
+      <p class="caption">图 3：分阶段验收可定位误差究竟来自表征、生成、映射还是执行</p>
+    </div>
+  </section>
+
+  <section id="s7">
+    <h2><span class="no">07</span>鲁棒性：触觉条件与主动恢复</h2>
+    <p class="subtitle">蒸馏不是终点；长期运行要求模型见过“快要失败时应该怎么救”。</p>
+    <p>稳定专家轨迹主要集中在正常旋转区域，但真机中不可避免会出现动作偏差、手指短时失去接触或物体受外力。如果训练集只有稳定状态，模型在分布外状态下无法知道如何回到安全区域。因此项目专门构造主动恢复数据：</p>
+    <div class="flow">
+      <div class="flow-step"><div class="step-no">01</div><div class="step-title">稳定旋转</div><div class="step-desc">RL 专家在正常分布中持续 CW/CCW</div></div>
+      <div class="flow-step"><div class="step-no">02</div><div class="step-title">注入扰动</div><div class="step-desc">action bias / 单指释放 / 物体外力，持续约 0.2 s</div></div>
+      <div class="flow-step"><div class="step-no">03</div><div class="step-title">恢复控制权</div><div class="step-desc">停止扰动，由干净 RL 专家接管</div></div>
+      <div class="flow-step"><div class="step-no">04</div><div class="step-title">标记成功窗口</div><div class="step-desc">未掉落、≥3 指接触、沿目标方向继续旋转</div></div>
+      <div class="flow-step"><div class="step-no">05</div><div class="step-title">重采样训练</div><div class="step-desc">显式提高成功恢复窗口占比</div></div>
+    </div>
+    <p>五指触觉按照 thumb / index / middle / ring / pinky 的固定顺序输入。active-recovery v3 使用 v2b 触觉架构，通过独立时序编码器提取五指接触变化，并用未来触觉辅助目标帮助模型学习滑移与恢复趋势。</p>
+    <div class="callout orange"><strong>恢复成功不是“物体暂时没掉”：</strong>还要求至少三指保持接触，并且物体重新产生不低于阈值的目标方向转速，从而避免模型只学会夹死物体。</div>
+  </section>
+
+  <section id="s8">
+    <h2><span class="no">08</span>MANUS 人机交互：正转、反转与停止</h2>
+    <p class="subtitle">手套提供的是高层意图；机器人仍由稳定动作模型负责执行。</p>
+    <h3>8.1 MANUS guidance 链路</h3>
+    <p>MANUS 数据经过 RetargetX 得到 21 维手套关节目标，并通过 TCP 8020 发送。标定后，用手套关键点相对参考姿态的变化构造十点 motion command：</p>
+    <div class="formula">x<sub>goal</sub> = x<sub>robot,ref</sub> + gain · [FK(q<sub>glove,now</sub>) − FK(q<sub>glove,ref</sub>)]<br>command = x<sub>goal</sub> − FK(q<sub>robot,now</sub>)<span class="explain">手套只提供相对关键点 guidance，不直接加入 Diffusion/IDM 的状态向量。</span></div>
+
+    <h3>8.2 三种运行路径必须区分</h3>
+    <div class="table-wrap"><table>
+      <tr><th>控制路径</th><th>数据流</th><th>用途</th></tr>
+      <tr><td><strong>MANUS → DexGen</strong></td><td>手套关键点 command → Guided Diffusion → IDM → XHand</td><td>在专家先验约束下跟随人的任务空间意图</td></tr>
+      <tr><td><strong>noisy RL → DexGen</strong></td><td>RL+noise command → Guided Diffusion → IDM → XHand</td><td>仿真对照和 guidance 鲁棒性测试</td></tr>
+      <tr><td><strong>纯 MANUS 遥操</strong></td><td>MANUS 21-D q target → 重排/限位/变化限幅 → XHand</td><td>直接关节遥操；绕过 Diffusion、IDM 和触觉策略</td></tr>
+    </table></div>
+
+    <h3>8.3 自动 CW / CCW / HOLD 状态机</h3>
+    <p>系统利用个人标定的 CW、CCW 手势原型判断方向趋势。完全张掌持续约 1 秒进入 HOLD；恢复自然抓握约 0.2 秒后，回到进入 HOLD 前的旋转方向。</p>
+    <div class="diagram">
+      <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+        <defs><marker id="arrowD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#8792a6"/></marker></defs>
+        <rect x="70" y="92" width="190" height="105" rx="53" fill="#edf3ff" stroke="#2f66d0" stroke-width="2"/><text x="165" y="134" text-anchor="middle" font-size="20" font-weight="700" fill="#172033">CW</text><text x="165" y="163" text-anchor="middle" font-size="13" fill="#556176">顺时针生成与执行</text>
+        <rect x="640" y="92" width="190" height="105" rx="53" fill="#f3effc" stroke="#7251b5" stroke-width="2"/><text x="735" y="134" text-anchor="middle" font-size="20" font-weight="700" fill="#172033">CCW</text><text x="735" y="163" text-anchor="middle" font-size="13" fill="#556176">逆时针生成与执行</text>
+        <rect x="355" y="92" width="190" height="105" rx="53" fill="#fff5e8" stroke="#c56a16" stroke-width="2"/><text x="450" y="134" text-anchor="middle" font-size="20" font-weight="700" fill="#172033">HOLD</text><text x="450" y="163" text-anchor="middle" font-size="13" fill="#556176">锁存当前 PD target</text>
+        <path d="M260 125H350" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowD)"/><path d="M640 165H550" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowD)"/>
+        <path d="M355 180C310 252 210 252 165 202" fill="none" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowD)"/><path d="M545 180C590 252 690 252 735 202" fill="none" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowD)"/>
+        <path d="M260 85C350 20 550 20 640 85" fill="none" stroke="#8792a6" stroke-width="2" marker-end="url(#arrowD)"/>
+        <text x="305" y="111" text-anchor="middle" font-size="11" fill="#8792a6">张掌 1 s</text><text x="595" y="189" text-anchor="middle" font-size="11" fill="#8792a6">张掌 1 s</text><text x="260" y="262" text-anchor="middle" font-size="11" fill="#8792a6">恢复抓握 → 返回 CW</text><text x="640" y="262" text-anchor="middle" font-size="11" fill="#8792a6">恢复抓握 → 返回 CCW</text><text x="450" y="33" text-anchor="middle" font-size="11" fill="#8792a6">方向手势趋势切换</text>
+      </svg>
+      <p class="caption">图 4：MANUS 三态控制逻辑。HOLD 绕过 Diffusion/IDM，避免张掌手势导致机器人松手。</p>
+    </div>
+    <div class="callout red"><strong>安全原则：</strong>TCP 数据过期、断连、reset 或关节契约失败时必须 disarm 并保持安全 PD target，绝不能把“没有新数据”解释为“操作者要求静止”。</div>
+  </section>
+
+  <section id="s9">
+    <h2><span class="no">09</span>从仿真到真机：四个关键对齐</h2>
+    <p class="subtitle">Sim-to-Real 的重点不是单一模型，而是状态、动作、时间和安全契约的一致。</p>
+    <div class="cards">
+      <div class="card"><h4><span class="tag">01</span>状态与触觉对齐</h4><p>部署使用 83 维状态：78 维本体状态 + 五指触觉。传感器 profile、指序、归一化统计必须与训练 checkpoint 一致。</p></div>
+      <div class="card"><h4><span class="tag green">02</span>动作与关节对齐</h4><p>IDM 输出绝对 PD target；真机端严格执行关节名称重排、物理限位和单周期变化限幅，避免索引错位造成猛动。</p></div>
+      <div class="card"><h4><span class="tag purple">03</span>控制时序对齐</h4><p>生成规划 10 Hz、底层任务 20 Hz。MANUS 约 80 Hz 输入使用 latest-frame 语义，避免积压旧帧引入额外延迟。</p></div>
+      <div class="card"><h4><span class="tag orange">04</span>硬件安全对齐</h4><p>固定 mode=4、kp=10、kd=0.3、speed=0、torque=0；温度或厂商错误触发 mode 0，退出使用安全松手轨迹。</p></div>
+    </div>
+    <h3>9.1 分阶段验收顺序</h3>
+    <div class="timeline">
+      <div class="timeline-item"><b>数据审计</b><span>确认 episode 数量、方向符号、触觉分布、扰动类型和有效训练窗口。</span></div>
+      <div class="timeline-item"><b>IDM Oracle 验收</b><span>用真实 future motion 检查关节 target MAE，隔离运动映射能力。</span></div>
+      <div class="timeline-item"><b>Diffusion 离线串联</b><span>检查 motion MAE/RMSE、幅值比、相关性和 Diffusion → IDM target MAE。</span></div>
+      <div class="timeline-item"><b>Isaac 短时闭环</b><span>先 smoke test，再进行 CW/CCW、多 seed、固定 exposure 的正式评估。</span></div>
+      <div class="timeline-item"><b>MANUS 输入与仿真</b><span>完成 30 秒数据探针、个人 profile 标定、方向和 HOLD 测试。</span></div>
+      <div class="timeline-item"><b>XHand 真机分阶段测试</b><span>连接 → 预抓取 → 3–5 秒旋转 → HOLD → 恢复 → 安全松手。</span></div>
+    </div>
+    <div class="media"><img src="../../doc/截图/旋转.gif" alt="XHand1 Pro 真机手内旋转演示"></div>
+    <p class="caption">真机手内旋转演示。复制到飞书时可将这一帧区域截图，或单独上传原始 GIF。</p>
+  </section>
+
+  <section id="s10">
+    <h2><span class="no">10</span>结果、工程沉淀与下一步</h2>
+    <p class="subtitle">当前 active-recovery v3 是正式基线，已经完成数据—训练—评估—交互—部署链路。</p>
+    <h3>10.1 当前正式模型</h3>
+    <div class="table-wrap"><table>
+      <tr><th>模块</th><th>正式 checkpoint</th></tr>
+      <tr><td>Diffusion</td><td><code>diffusion_modes_full_dr_active_recovery_v3_v2b_best.pt</code></td></tr>
+      <tr><td>IDM</td><td><code>idm_modes_full_dr_active_recovery_v3_best.pt</code></td></tr>
+    </table></div>
+
+    <h3>10.2 主动恢复闭环结果</h3>
+    <div class="table-wrap"><table>
+      <tr><th>指标（CW + CCW）</th><th>历史 tactile-v1</th><th>active-recovery v3</th><th>变化</th></tr>
+      <tr><td>恢复成功率</td><td class="num">68.53%</td><td class="num good">73.68%</td><td class="num good">+5.15 pp</td></tr>
+      <tr><td>Episode 掉落率</td><td class="num">61.47%</td><td class="num good">55.00%</td><td class="num good">−6.47 pp</td></tr>
+      <tr><td>扰动事件掉落</td><td class="num">81</td><td class="num good">61</td><td class="num good">−24.69%</td></tr>
+      <tr><td>Action bias 恢复率</td><td class="num">70.95%</td><td class="num good">75.28%</td><td class="num good">+4.33 pp</td></tr>
+      <tr><td>单指释放恢复率</td><td class="num">60.34%</td><td class="num good">66.10%</td><td class="num good">+5.77 pp</td></tr>
+      <tr><td>物体外力恢复率</td><td class="num">74.30%</td><td class="num good">79.66%</td><td class="num good">+5.36 pp</td></tr>
+    </table></div>
+    <p>CW 转速由 0.7987 提升到 0.8332 rad/s，CCW 由 0.7573 提升到 0.7931 rad/s；wrong-way 同时下降。这说明恢复率提升并非依靠减慢旋转或单纯夹紧物体。</p>
+
+    <h3>10.3 工程沉淀</h3>
+    <div class="cards">
+      <div class="card"><h4>可续跑数据流水线</h4><p>支持 CW/CCW 分片采集、进度记录、断点续跑和逐分片恢复数据审计。</p></div>
+      <div class="card"><h4>Checkpoint 合约</h4><p>约束 state dim、history、关键点语义、触觉架构和 normalizer，避免不兼容模型混用。</p></div>
+      <div class="card"><h4>分层评估体系</h4><p>覆盖 oracle IDM、离线串联、Isaac 闭环、主动扰动、MANUS 仿真和真机分阶段验证。</p></div>
+      <div class="card"><h4>真机安全状态机</h4><p>具备预抓取、HOLD、数据 stale 保护、温度保护、mode 0 和安全松手轨迹。</p></div>
+    </div>
+
+    <h3>10.4 当前局限</h3>
+    <ul>
+      <li>主动恢复成功率仍约为 73.68%，episode 掉落率约 55%，长时稳定性仍有提升空间。</li>
+      <li>当前任务和数据以圆柱旋转为主，跨形状、跨尺寸和复杂物体的泛化尚需系统验证。</li>
+      <li>MANUS 方向识别依赖个人 profile 标定，不同操作者之间的通用性有限。</li>
+      <li>Diffusion 迭代采样带来推理开销，需要继续研究更少 DDIM steps、蒸馏或一致性模型。</li>
+      <li>Diffusion 与 IDM 分阶段训练可能产生分布偏差，尚可探索联合训练或闭环数据聚合。</li>
+    </ul>
+
+    <h3>10.5 后续方向</h3>
+    <div class="flow">
+      <div class="flow-step"><div class="step-no">NEXT 1</div><div class="step-title">提升恢复能力</div><div class="step-desc">扩大真实失败前沿数据，优化扰动分布和成功恢复采样</div></div>
+      <div class="flow-step"><div class="step-no">NEXT 2</div><div class="step-title">模型闭环优化</div><div class="step-desc">引入 DAgger / 在线聚合，缩小训练 motion 与执行 motion 的差异</div></div>
+      <div class="flow-step"><div class="step-no">NEXT 3</div><div class="step-title">交互泛化</div><div class="step-desc">减少个人标定，提升跨操作者的 CW/CCW/HOLD 识别</div></div>
+      <div class="flow-step"><div class="step-no">NEXT 4</div><div class="step-title">任务扩展</div><div class="step-desc">从圆柱旋转扩展到多物体、多轴旋转与更复杂手内操作</div></div>
+    </div>
+
+    <div class="callout"><strong>总结：</strong>本项目的核心价值不仅是让灵巧手“转起来”，而是建立了一套可复用的方法：用强化学习专家产生高质量行为，用关键点空间统一运动语义，用生成模型表达多模态动作，用 IDM 连接具体机器人，再通过触觉、主动恢复、MANUS 交互和严格的 Sim-to-Real 契约完成闭环落地。</div>
+  </section>
+
+  <footer>文档依据项目仓库 <code>dexgen/HANDOVER.md</code>、<code>dexgen/docs/DEVELOPMENT.md</code> 与 <code>ACTIVE_RECOVERY_V3_RESULTS.md</code> 整理。建议在浏览器中打开后分章节复制到飞书；流程图可直接截图。</footer>
+</main>
+</body>
+</html>

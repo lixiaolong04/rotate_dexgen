@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>灵巧手抓取姿态生成｜Anygrasp-to-Anygrasp 的数据基础</title>
+  <style>
+    :root{--bg:#07111e;--panel:#0d1d30;--panel2:#10243a;--line:#29455f;--text:#eef6fc;--muted:#93aabd;--cyan:#43c7ff;--green:#59dfae;--orange:#ffb44c;--violet:#b58cff;--red:#ff7185;--shadow:0 18px 52px rgba(0,0,0,.29)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--text);background:radial-gradient(900px 560px at 82% -5%,rgba(67,199,255,.14),transparent 65%),radial-gradient(720px 520px at 0 32%,rgba(181,140,255,.07),transparent 68%),var(--bg);font-family:Inter,"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.72;letter-spacing:.01em}a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}code,pre{font-family:"SFMono-Regular",Consolas,monospace}code{padding:.1em .35em;border-radius:5px;background:rgba(67,199,255,.08);color:#c5edff}.shell{width:min(1240px,calc(100% - 40px));margin:auto}.hero{min-height:94vh;display:grid;align-items:center;position:relative;overflow:hidden;padding:55px 0}.hero:after{content:"";position:absolute;right:-130px;top:25px;width:570px;height:570px;border:1px solid rgba(67,199,255,.1);border-radius:50%;box-shadow:0 0 0 90px rgba(67,199,255,.018),0 0 0 180px rgba(67,199,255,.01)}.eyebrow{color:var(--cyan);font-size:13px;font-weight:850;letter-spacing:.18em;text-transform:uppercase}h1{font-size:clamp(42px,6vw,78px);line-height:1.05;letter-spacing:-.045em;margin:20px 0 24px;max-width:1000px}h1 span{color:var(--cyan)}.lead{font-size:clamp(18px,2vw,23px);color:#b9ccdc;max-width:950px}.chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}.chip{padding:8px 13px;border:1px solid var(--line);border-radius:999px;background:rgba(13,29,48,.75);color:#bed1df;font-size:13px}.paper-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-top:42px;position:relative;z-index:2}.paper-card{padding:20px;border:1px solid var(--line);border-top:3px solid var(--cyan);border-radius:15px;background:rgba(13,29,48,.8);min-height:180px}.paper-card:nth-child(2){border-top-color:var(--orange)}.paper-card:nth-child(3){border-top-color:var(--green)}.paper-card:nth-child(4){border-top-color:var(--violet)}.paper-card b{display:block;font-size:20px}.paper-card a{display:block;margin:9px 0 12px;color:#dcecf7;font-size:13px;font-weight:650;line-height:1.45}.paper-card a:hover{color:var(--cyan)}.paper-card span{display:block;color:var(--muted);font-size:12px;line-height:1.5}.layout{display:grid;grid-template-columns:245px minmax(0,1fr);gap:46px;align-items:start}.toc{position:sticky;top:22px;padding:20px;border:1px solid var(--line);border-radius:15px;background:rgba(8,20,34,.9);backdrop-filter:blur(12px);font-size:13px}.toc strong{display:block;margin-bottom:10px}.toc a{display:block;padding:6px 9px;color:var(--muted);border-left:2px solid transparent}.toc a:hover,.toc a.active{color:var(--cyan);border-left-color:var(--cyan);background:rgba(67,199,255,.05);text-decoration:none}main{padding-bottom:100px}section{padding:74px 0 6px;scroll-margin-top:20px}.kicker{color:var(--cyan);font-size:12px;font-weight:850;letter-spacing:.16em;text-transform:uppercase}h2{font-size:clamp(30px,4vw,46px);line-height:1.2;letter-spacing:-.025em;margin:8px 0 18px}h3{font-size:23px;margin:36px 0 12px}h4{font-size:17px;margin:0 0 8px}p,li,td{color:#b6c9d8}.intro{font-size:18px;color:#c8d9e5;max-width:890px}.panel{padding:25px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(16,36,58,.94),rgba(11,26,44,.94));box-shadow:var(--shadow)}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.tag{display:inline-block;padding:3px 8px;border:1px solid currentColor;border-radius:999px;color:var(--cyan);font-size:11px;font-weight:850;letter-spacing:.08em;margin-bottom:10px}.callout{margin:22px 0;padding:18px 22px;border-left:4px solid var(--cyan);border-radius:0 12px 12px 0;background:rgba(67,199,255,.07);color:#cbdde9}.callout.green{border-color:var(--green);background:rgba(89,223,174,.07)}.callout.warn{border-color:var(--orange);background:rgba(255,180,76,.07)}.callout.red{border-color:var(--red);background:rgba(255,113,133,.07)}.formula{padding:22px;border:1px solid rgba(181,140,255,.35);border-radius:14px;background:rgba(181,140,255,.07);color:#eadfff;text-align:center;font:15px/1.9 "SFMono-Regular",Consolas,monospace;overflow:auto}.flow{display:grid;grid-template-columns:1fr 40px 1fr 40px 1fr;align-items:stretch;margin:26px 0}.flow .arrow{display:grid;place-items:center;color:var(--cyan);font-size:25px}.node{padding:21px;border:1px solid var(--line);border-top:3px solid var(--cyan);border-radius:15px;background:var(--panel)}.node.green{border-top-color:var(--green)}.node.orange{border-top-color:var(--orange)}.node.violet{border-top-color:var(--violet)}.node small{color:var(--muted)}.diagram{padding:24px;border:1px solid var(--line);border-radius:18px;background:#091726;box-shadow:var(--shadow)}table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14px}th,td{padding:12px 13px;border-bottom:1px solid var(--line);vertical-align:top}th{text-align:left;color:#deedf7;background:rgba(67,199,255,.07)}td strong{color:var(--text)}ul,ol{padding-left:1.25em}li{margin:6px 0}.paper-head{display:flex;gap:18px;align-items:flex-start}.paper-index{flex:0 0 48px;width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:rgba(67,199,255,.12);color:var(--cyan);font-weight:900}.paper-head h3{margin:0}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}.metric{padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}.metric b{display:block;font-size:25px;color:var(--cyan);line-height:1.25}.metric span{font-size:12px;color:var(--muted)}.bars{padding:22px;border:1px solid var(--line);border-radius:15px;background:var(--panel)}.bar-row{display:grid;grid-template-columns:140px 1fr 85px;gap:12px;align-items:center;margin:13px 0;color:#b8cbd9;font-size:13px}.bar{height:10px;border-radius:999px;background:#20364a;overflow:hidden}.bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--cyan),var(--green))}figure{margin:28px 0}.figure-frame{overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#06101c;box-shadow:var(--shadow)}img{display:block;max-width:100%}figcaption{margin-top:10px;color:var(--muted);font-size:13px}.timeline{position:relative;padding-left:28px}.timeline:before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:var(--line)}.event{position:relative;margin-bottom:25px}.event:before{content:"";position:absolute;left:-27px;top:8px;width:12px;height:12px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 5px rgba(67,199,255,.12)}.event p{margin:4px 0}.priority{font-weight:850;color:var(--orange)}.check{list-style:none;padding:0}.check li{position:relative;padding-left:27px}.check li:before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:900}.print{position:fixed;right:22px;bottom:22px;z-index:10;padding:11px 16px;border:1px solid var(--line);border-radius:999px;background:#10243a;color:var(--text);cursor:pointer;box-shadow:var(--shadow)}footer{padding:36px 0 60px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}@media(max-width:1050px){.paper-grid{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.toc{position:relative;top:auto;columns:2}.toc strong{column-span:all}.grid4{grid-template-columns:repeat(2,1fr)}}@media(max-width:700px){.shell{width:calc(100% - 24px)}.hero{min-height:auto;padding:78px 0 48px}.paper-grid,.grid2,.grid3,.grid4,.metrics{grid-template-columns:1fr}.toc{columns:1}.flow{grid-template-columns:1fr}.flow .arrow{height:40px;transform:rotate(90deg)}.tablewrap{overflow:auto}.bar-row{grid-template-columns:105px 1fr 62px}.print{display:none}}@media print{:root{--bg:#fff;--panel:#fff;--text:#102030;--muted:#52677a;--line:#cbd7e1}body{background:#fff;font-size:10.5pt}.hero{min-height:auto;padding:17mm 0 10mm}.hero:after,.toc,.print{display:none}.layout{display:block}.panel,.paper-card,.node,.diagram,.metric,.figure-frame{box-shadow:none;background:#fff;break-inside:avoid}p,li,td,.lead,.intro{color:#334e62}section{padding:9mm 0 0}h2,h3{break-after:avoid}table,.flow,.callout,figure{break-inside:avoid}}
+    .paper-figure{margin:26px 0 30px}.paper-figure>a{display:block;position:relative;padding:14px;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:var(--shadow);overflow:hidden}.paper-figure>a:after{content:"点击查看原图 ↗";position:absolute;right:22px;bottom:20px;padding:6px 10px;border-radius:999px;background:rgba(7,17,30,.86);color:#eef6fc;font-size:11px;opacity:0;transform:translateY(5px);transition:.2s}.paper-figure>a:hover:after{opacity:1;transform:none}.paper-figure img{display:block;width:100%;height:auto;border-radius:8px}.paper-figure figcaption{margin-top:12px;color:var(--muted);font-size:13px}.figure-guide{margin-top:14px}.figure-guide .panel{padding:16px 18px;box-shadow:none}.figure-guide h4{font-size:14px}.figure-guide p{font-size:12px;margin:0}@media(max-width:700px){.paper-figure>a{padding:6px}.paper-figure>a:after{display:none}}@media print{.paper-figure,.figure-guide{break-inside:avoid}.paper-figure>a{box-shadow:none}}
+  </style>
+</head>
+<body>
+  <button class="print" onclick="window.print()">打印 / 导出 PDF</button>
+  <header class="hero">
+    <div class="shell">
+      <div class="eyebrow">Dexterous Manipulation Research · Mainline 02</div>
+      <h1>灵巧手抓取姿态生成<br><span>Anygrasp-to-Anygrasp 的数据基础</span></h1>
+      <p class="lead">为什么 DexGen 需要大规模、多样且动态可达的抓取状态？从程序化接触场、双层力闭合优化、通用视觉抓取到人类先验引导的统一生成。</p>
+      <div class="chips"><span class="chip">技术主线 02</span><span class="chip">核心论文：4 篇</span><span class="chip">任务：Anygrasp-to-Anygrasp</span><span class="chip">机器人：XHand Right</span><span class="chip">更新：2026-08-11</span></div>
+      <div class="paper-grid">
+        <div class="paper-card"><b>Lightning Grasp</b><a href="https://arxiv.org/abs/2511.07418" target="_blank" rel="noopener">Lightning Grasp: High Performance Procedural Grasp Synthesis with Contact Fields</a><span>arXiv:2511.07418 · 程序化高速抓取数据引擎</span></div>
+        <div class="paper-card"><b>BODex</b><a href="https://arxiv.org/abs/2412.16490" target="_blank" rel="noopener">BODex: Scalable and Efficient Robotic Dexterous Grasp Synthesis Using Bilevel Optimization</a><span>arXiv:2412.16490 · ICRA 2025 · 双层力闭合优化</span></div>
+        <div class="paper-card"><b>UniDexGrasp</b><a href="https://arxiv.org/abs/2303.00938" target="_blank" rel="noopener">UniDexGrasp: Universal Robotic Dexterous Grasping via Learning Diverse Proposal Generation and Goal-Conditioned Policy</a><span>arXiv:2303.00938 · CVPR 2023 · 通用提案与目标条件执行</span></div>
+        <div class="paper-card"><b>HUGS</b><a href="https://arxiv.org/abs/2607.04554" target="_blank" rel="noopener">HUGS: Guiding Unified Dexterous Grasp Synthesis Across Modes and Scales via Learned Human Priors</a><span>arXiv:2607.04554 · 人类先验与跨模式生成</span></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="shell layout">
+    <nav class="toc"><strong>报告目录</strong><a href="#summary">01 核心结论</a><a href="#why">02 为什么需要抓取生成</a><a href="#requirements">03 Anygrasp 数据要求</a><a href="#taxonomy">04 方法谱系</a><a href="#lightning">05 Lightning Grasp</a><a href="#bodex">06 BODex</a><a href="#unidex">07 UniDexGrasp</a><a href="#hugs">08 HUGS</a><a href="#compare">09 横向比较</a><a href="#hybrid">10 组合技术方案</a><a href="#roadmap">11 XHand 路线图</a><a href="#evaluation">12 评测与验收</a><a href="#conclusion">13 结论</a></nav>
+    <main>
+      <section id="summary">
+        <div class="kicker">01 · Executive summary</div><h2>核心结论</h2>
+        <p class="intro">抓取姿态生成不是 DexGen 的外围工具，而是 Anygrasp-to-Anygrasp RL 的状态空间定义器。生成数据的覆盖、质量和连通性，会直接决定策略能学会多少种手内操作。</p>
+        <div class="callout green"><strong>对当前项目的建议：</strong>继续以 Lightning Grasp 作为 XHand 主生成器；引入 BODex 的力闭合/QP思想作为质量增强；借鉴 HUGS 学习“物体—接触拓扑—腕姿”高层先验；把 UniDexGrasp 视作后续在线视觉提案和目标条件执行参考。</div>
+        <div class="grid4">
+          <div class="panel"><span class="tag">速度优先</span><h4>Lightning Grasp</h4><p>适合为每个物体快速铺满候选状态空间，且 XHand 已经接通。</p></div>
+          <div class="panel"><span class="tag" style="color:var(--orange)">质量优先</span><h4>BODex</h4><p>力闭合定义更严格，并提供 pre-grasp 与六方向物理验证。</p></div>
+          <div class="panel"><span class="tag" style="color:var(--green)">学习部署</span><h4>UniDexGrasp</h4><p>将视觉抓取提案和 goal-conditioned RL 执行连接起来。</p></div>
+          <div class="panel"><span class="tag" style="color:var(--violet)">模式先验</span><h4>HUGS</h4><p>为不同尺度和几何选择接触模式与腕部初始化，减少无效搜索。</p></div>
+        </div>
+        <div class="callout warn"><strong>不能只比较“生成了多少抓取”。</strong>对 Anygrasp-to-Anygrasp，更重要的是：节点是否动态稳定、邻边是否可达、接触拓扑是否多样，以及状态是否形成可学习的连通流形。</div>
+      </section>
+
+      <section id="why">
+        <div class="kicker">02 · Why grasp synthesis matters</div><h2>为什么要专门介绍抓取姿态生成</h2>
+        <p>DexterityGen 的核心预训练任务是 Anygrasp-to-Anygrasp：把物体从一个可行抓取状态移动到另一个可行抓取状态。每个抓取可写为：</p>
+        <div class="formula">g = (q, T<sub>HO</sub>, C) &nbsp;&nbsp;｜&nbsp;&nbsp; 手关节 q + 物体相对手位姿 T<sub>HO</sub> + 接触拓扑 C</div>
+        <p>训练时从抓取集合选择初始状态，再从邻近抓取选择目标状态；策略成功到达后继续切换目标。最终 rollout 覆盖旋转、平移、手指腾挪与接触切换，成为生成式低层控制器的数据。</p>
+        <div class="flow"><div class="node"><h4>抓取状态库</h4><small>定义哪些 hand-object 状态是可行节点</small></div><div class="arrow">→</div><div class="node green"><h4>邻接目标</h4><small>kNN / 拓扑配额形成难度适中的课程</small></div><div class="arrow">→</div><div class="node violet"><h4>RL Rollout</h4><small>把离散状态转换为连续动态操作轨迹</small></div></div>
+        <h3>生成器会决定 RL 学到什么</h3>
+        <div class="grid3"><div class="panel"><h4>覆盖不足</h4><p>如果只有少数包覆抓取，策略只会保持物体，无法学习旋转、重抓取和不同接触模式切换。</p></div><div class="panel"><h4>质量不足</h4><p>如果节点本身穿透或不稳定，RL 初始化会频繁掉落，奖励信号被坏数据淹没。</p></div><div class="panel"><h4>连通性不足</h4><p>即使每个节点都稳定，彼此之间若不可动态迁移，kNN 目标仍会制造不可完成任务。</p></div></div>
+        <div class="callout"><strong>重要区分：</strong>抓取姿态生成回答“终点状态长什么样”；抓取执行回答“如何从外部接近并抓住”；Anygrasp-to-Anygrasp 回答“已在手中时如何在两个抓取之间迁移”。三者相关但不是同一任务。</div>
+      </section>
+
+      <section id="requirements">
+        <div class="kicker">03 · Dataset specification</div><h2>Anygrasp-to-Anygrasp 对数据的特殊要求</h2>
+        <div class="tablewrap"><table><thead><tr><th>维度</th><th>普通抓取数据集关注</th><th>Anygrasp 数据额外要求</th></tr></thead><tbody>
+          <tr><td><strong>物理质量</strong></td><td>能否抬起并保持物体</td><td>在多腕姿、重力方向和扰动下仍适合作为 RL 初始化</td></tr>
+          <tr><td><strong>姿态多样性</strong></td><td>同一物体有多个抓法</td><td>物体相对手的平移/旋转空间必须连续覆盖</td></tr>
+          <tr><td><strong>接触拓扑</strong></td><td>指尖接触或包覆抓取</td><td>需要不同活动手指数和手指组合，支持接触切换</td></tr>
+          <tr><td><strong>局部密度</strong></td><td>可独立使用的离散姿态</td><td>每个状态附近应有可达邻居，便于课程学习</td></tr>
+          <tr><td><strong>边信息</strong></td><td>通常没有</td><td>最好保存父子关系、状态差和动态可达标签</td></tr>
+          <tr><td><strong>生成吞吐</strong></td><td>足够训练视觉模型</td><td>多物体、多拓扑和稠密局部覆盖使规模需求更高</td></tr>
+        </tbody></table></div>
+        <div class="formula">真正的训练资产 = 稳定节点 V + 动态可达边 E + 成功迁移轨迹 τ</div>
+        <p>因此，生成器的最终验收不应停留在 <code>|V|</code>，而应继续测量有效边比例、图连通分量、平均最短路径和 RL 转移成功率。</p>
+      </section>
+
+      <section id="taxonomy">
+        <div class="kicker">04 · Method landscape</div><h2>四种方法代表的技术谱系</h2>
+        <div class="diagram">
+          <svg viewBox="0 0 1020 390" role="img" aria-label="灵巧手抓取生成方法谱系" style="width:100%;height:auto">
+            <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#43c7ff"/></marker></defs>
+            <g font-family="Inter,Noto Sans SC,sans-serif" fill="#eef6fc">
+              <text x="30" y="32" fill="#93aabd" font-size="13" font-weight="700">离线抓取状态生成</text>
+              <rect x="30" y="58" width="210" height="92" rx="14" fill="#10243a" stroke="#43c7ff"/><text x="135" y="92" text-anchor="middle" font-weight="800">Lightning Grasp</text><text x="135" y="118" text-anchor="middle" fill="#93aabd" font-size="12">Contact Field + 程序化搜索</text><text x="135" y="137" text-anchor="middle" fill="#43c7ff" font-size="11">高速覆盖</text>
+              <rect x="290" y="58" width="210" height="92" rx="14" fill="#10243a" stroke="#ffb44c"/><text x="395" y="92" text-anchor="middle" font-weight="800">BODex</text><text x="395" y="118" text-anchor="middle" fill="#93aabd" font-size="12">双层 QP + 梯度优化</text><text x="395" y="137" text-anchor="middle" fill="#ffb44c" font-size="11">力闭合质量</text>
+              <rect x="550" y="58" width="210" height="92" rx="14" fill="#10243a" stroke="#b58cff"/><text x="655" y="92" text-anchor="middle" font-weight="800">HUGS</text><text x="655" y="118" text-anchor="middle" fill="#93aabd" font-size="12">人类先验 + 物理优化</text><text x="655" y="137" text-anchor="middle" fill="#b58cff" font-size="11">模式与尺度</text>
+              <rect x="810" y="58" width="180" height="92" rx="14" fill="#10243a" stroke="#59dfae"/><text x="900" y="92" text-anchor="middle" font-weight="800">UniDex Dataset</text><text x="900" y="118" text-anchor="middle" fill="#93aabd" font-size="12">能量优化 + 仿真筛选</text><text x="900" y="137" text-anchor="middle" fill="#59dfae" font-size="11">大类目监督</text>
+              <path d="M135 150V210H900V150M395 150V210M655 150V210" fill="none" stroke="#3c5871" stroke-width="1.5"/>
+              <rect x="300" y="240" width="420" height="105" rx="16" fill="#10243a" stroke="#59dfae" stroke-width="2"/><text x="510" y="275" text-anchor="middle" font-weight="800">学习式抓取提案 / 目标条件执行</text><text x="510" y="303" text-anchor="middle" fill="#93aabd" font-size="13">UniDexGrasp · HUGS distilled generator · XHand future model</text><text x="510" y="329" text-anchor="middle" fill="#59dfae" font-size="12">从离线完整几何与仿真监督，迁移到在线点云输入</text>
+              <path d="M510 210V230" stroke="#43c7ff" stroke-width="2" marker-end="url(#a)"/>
+            </g>
+          </svg>
+        </div>
+        <p>Lightning Grasp、BODex 与 HUGS主要解决离线高质量状态生成；UniDexGrasp还进一步研究如何用这些状态监督在线视觉提案，以及如何通过 goal-conditioned policy 执行目标抓取。比较时必须区分离线生成器与在线模型。</p>
+      </section>
+
+      <section id="lightning">
+        <div class="kicker">05 · Paper card</div><div class="paper-head"><div class="paper-index">01</div><div><h3>Lightning Grasp</h3><a href="https://arxiv.org/abs/2511.07418" target="_blank" rel="noopener">High Performance Procedural Grasp Synthesis with Contact Fields</a></div></div>
+        <p class="intro">核心是把昂贵几何计算从搜索循环中解耦：预先构造手部 Contact Field，查询物体表面的可达接触域，再优化接触组合与关节姿态。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/lightning_grasp_figure5_system.png" target="_blank" title="点击查看 Lightning Grasp 系统原图"><img src="assets/paper_figures/lightning_grasp_figure5_system.png" alt="Lightning Grasp 从机器人接触场构建到抓取生成的系统流程" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 5｜Lightning Grasp 系统流程。</strong>上半部分把机器人链节的几何与运动学预计算为可复用的 Contact Field；下半部分以物体为输入，依次完成放置、接触域检测、接触优化、运动学优化与后处理。来源：<a href="https://arxiv.org/abs/2511.07418" target="_blank" rel="noopener">Lightning Grasp, arXiv:2511.07418</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 机器人侧预计算</h4><p>将各 link 的表面、法向和可达关系压缩成接触场资产，使昂贵几何查询不必在每次抓取搜索中重复执行。</p></div><div class="panel"><h4>② 物体侧批量搜索</h4><p>在候选物体放置上检测可达接触域，再组合并优化多指接触；中间结果可以缓存、复用和迭代扩展。</p></div><div class="panel"><h4>③ 可执行状态输出</h4><p>接触目标经过 IK 与碰撞后处理，转成满足关节限位、物体碰撞和自碰撞约束的 hand-object 状态。</p></div></div>
+        </figure>
+        <div class="flow"><div class="node"><h4>Contact Field</h4><small>位置 + 法向的 6D 可接触空间，BVH 加速</small></div><div class="arrow">→</div><div class="node"><h4>Contact Search</h4><small>物体放置、接触域查询、接触点优化</small></div><div class="arrow">→</div><div class="node"><h4>IK + Filter</h4><small>运动学精修、物体碰撞与自碰撞后处理</small></div></div>
+        <div class="metrics"><div class="metric"><b>2–5 s</b><span>论文报告 A100 单次前向</span></div><div class="metric"><b>300–1000/s</b><span>论文报告有效样本吞吐</span></div><div class="metric"><b>30,000</b><span>本项目 XHand 几何抓取</span></div><div class="metric"><b>5,548</b><span>下游筛选后 kNN 节点</span></div></div>
+        <div class="grid2"><div class="panel"><span class="tag" style="color:var(--green)">对 Anygrasp 的优势</span><ul><li>适合快速铺设大规模候选状态。</li><li>接触域可按 XHand link 明确定义，方便控制拓扑。</li><li>生成逻辑模块化，已成功接入 XHand 21 DoF。</li><li>能够围绕种子做接触保持局部扩展。</li></ul></div><div class="panel"><span class="tag" style="color:var(--red)">边界</span><ul><li>几何接触指标不是严格力闭合证明。</li><li>输出主要是状态，不含接近轨迹和迁移轨迹。</li><li>接触域与碰撞白名单依赖人工机器人配置。</li><li>新物体仍需 canonical space 与阈值复核。</li></ul></div></div>
+        <figure><div class="figure-frame"><img src="../outputs/grasp_gallery/xhand_grasp_gallery_3_4_5.png" alt="XHand 三、四、五接触抓取姿态" loading="lazy"></div><figcaption>图 1｜当前项目使用 Lightning Grasp 生成的真实 XHand 三、四、五活动接触姿态。</figcaption></figure>
+      </section>
+
+      <section id="bodex">
+        <div class="kicker">06 · Paper card</div><div class="paper-head"><div class="paper-index" style="color:var(--orange);background:rgba(255,180,76,.12)">02</div><div><h3>BODex</h3><a href="https://arxiv.org/abs/2412.16490" target="_blank" rel="noopener">Scalable and Efficient Robotic Dexterous Grasp Synthesis Using Bilevel Optimization</a></div></div>
+        <p class="intro">把抓取质量写成双层优化：内层 QP 在摩擦锥约束下寻找最优接触力，外层梯度下降调整手掌与关节姿态，使其能够抵抗多个方向的目标 wrench。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/bodex_figure2_coarse_to_fine.png" target="_blank" title="点击查看 BODex 粗到细优化原图"><img src="assets/paper_figures/bodex_figure2_coarse_to_fine.png" alt="BODex 使用碰撞球和精确网格接触的粗到细优化策略" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 2｜BODex 的粗到细接触建模。</strong>论文用这张图解释最关键的工程加速：粗阶段以碰撞球快速建立近似接触，细阶段切换到手部与物体的精确网格接触，并在 world frame 与 link frame 之间转换接触量。来源：<a href="https://arxiv.org/abs/2412.16490" target="_blank" rel="noopener">BODex, arXiv:2412.16490</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 粗阶段：先找可行区域</h4><p>以手部碰撞球近似表面，快速计算接触点、法向和聚合关节梯度，用低成本搜索把手拉到物体附近。</p></div><div class="panel"><h4>② 细阶段：回到真实几何</h4><p>候选进入局部收敛区后，改用精确网格距离与接触点，减少碰撞球近似造成的穿透和接触偏差。</p></div><div class="panel"><h4>③ 坐标变换支撑优化</h4><p>接触点和法向通过 link 位姿映射到统一世界坐标，使根位姿、关节量和力闭合目标能够联合求梯度。</p></div></div>
+        </figure>
+        <div class="formula">Q<sub>j</sub>(x) = min<sub>f</sub> ‖βt<sub>j</sub> − ΣG<sub>i</sub>(x)f<sub>j,i</sub>‖²<br>subject to f<sub>j,i</sub> ∈ friction cone；外层优化 x = [root pose, q]</div>
+        <h3>工程实现</h3>
+        <div class="flow"><div class="node orange"><h4>Coarse</h4><small>碰撞球近似、cuRobo、300 次优化</small></div><div class="arrow">→</div><div class="node orange"><h4>Fine / Pre-grasp</h4><small>GJK 精确网格接触、保持 1 cm 距离</small></div><div class="arrow">→</div><div class="node orange"><h4>Grasp + Squeeze</h4><small>最终接触姿态、挤压目标与无碰轨迹</small></div></div>
+        <div class="metrics"><div class="metric"><b>4.09M</b><span>Floating：2,397 物体，三种手</span></div><div class="metric"><b>3.08M</b><span>Tabletop：UR10e + Shadow 轨迹</span></div><div class="metric"><b>79.9%</b><span>Allegro 基准仿真成功率</span></div><div class="metric"><b>0.51 mm</b><span>Allegro 基准穿透深度</span></div></div>
+        <div class="bars"><div class="bar-row"><span>BODex SSR</span><div class="bar"><i style="width:79.9%"></i></div><strong>79.9%</strong></div><div class="bar-row"><span>DexGraspNet</span><div class="bar"><i style="width:37%"></i></div><strong>37.0%</strong></div><div class="bar-row"><span>FRoGGeR</span><div class="bar"><i style="width:17.2%"></i></div><strong>17.2%</strong></div><div class="bar-row"><span>SpringGrasp</span><div class="bar"><i style="width:12.1%"></i></div><strong>12.1%</strong></div></div>
+        <p class="muted">论文统一 Allegro 基准中的结果；BODex 合成速度为 61.5 grasp/s，其他基线使用各论文速度，硬件与实现并非完全一致。</p>
+        <div class="grid2"><div class="panel"><span class="tag" style="color:var(--green)">值得迁移</span><ul><li>QP 质量能量显式考虑摩擦与接触力组合。</li><li>六个重力方向严格物理验证适合 RL 初始化筛选。</li><li>pre-grasp、grasp、squeeze 和无碰轨迹字段完善。</li><li>可将其能量用于 Lightning 候选二次评分。</li></ul></div><div class="panel"><span class="tag" style="color:var(--red)">局限</span><ul><li>需要人工指定各指尖 contact spheres。</li><li>论文抓取只使用指尖，不利用掌心接触。</li><li>未覆盖 clutter，抓取也不是 functional grasp。</li><li>移植 XHand 需接入 cuRobo、浮动基座和精确碰撞模型。</li></ul></div></div>
+      </section>
+
+      <section id="unidex">
+        <div class="kicker">07 · Paper card</div><div class="paper-head"><div class="paper-index" style="color:var(--green);background:rgba(89,223,174,.12)">03</div><div><h3>UniDexGrasp</h3><a href="https://arxiv.org/abs/2303.00938" target="_blank" rel="noopener">Universal Robotic Dexterous Grasping via Learning Diverse Proposal Generation and Goal-Conditioned Policy</a></div></div>
+        <p class="intro">UniDexGrasp 不只是生成离线姿态，而是一个两阶段系统：从桌面点云生成多样目标抓取，再用视觉 goal-conditioned policy 从固定上方初始状态执行抓取。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/unidexgrasp_figure1_overview.png" target="_blank" title="点击查看 UniDexGrasp 方法总览原图"><img src="assets/paper_figures/unidexgrasp_figure1_overview.png" alt="UniDexGrasp 抓取提案生成与目标条件抓取策略总览" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 1｜UniDexGrasp 方法总览。</strong>左侧从物体点云生成目标抓取，右侧以目标手姿和点云为条件学习抓取策略；它把“抓取姿态生成”和“机器人如何到达该姿态”明确拆成两个模块。来源：<a href="https://arxiv.org/abs/2303.00938" target="_blank" rel="noopener">UniDexGrasp, arXiv:2303.00938</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 分解高维抓取分布</h4><p>GraspIPDF 先在 SO(3) 上采样根部旋转；点云 canonicalize 后，GraspGlow 再生成平移与手指关节角。</p></div><div class="panel"><h4>② 用接触一致性修复提案</h4><p>ContactNet 预测物体接触图，测试时优化同时约束姿态概率与接触图一致性，把采样结果推向更可靠的目标抓取。</p></div><div class="panel"><h4>③ 目标条件策略负责执行</h4><p>右侧策略接收目标手姿与当前点云，通过机器人本体状态融合和 teacher-to-student 学习，输出连续控制动作。</p></div></div>
+        </figure>
+        <div class="flow"><div class="node green"><h4>GraspIPDF</h4><small>在 SO(3) 上建模手根旋转分布</small></div><div class="arrow">→</div><div class="node green"><h4>GraspGlow + ContactNet</h4><small>生成平移与关节角，并用接触图做 TTA 修复</small></div><div class="arrow">→</div><div class="node green"><h4>Goal-conditioned RL</h4><small>oracle teacher + DAgger 视觉 student 执行目标抓取</small></div></div>
+        <h3>离线数据集</h3>
+        <ul><li>1.12M 个有效 Shadow Hand 抓取；</li><li>5,519 个物体实例、133 个类别，包含已见类别新实例和未见类别；</li><li>每个物体做 1,000 次生成，单次采用 6,000 步能量优化；</li><li>在 Isaac Gym 中验证六个轴向重力，并过滤超过 1 mm 的穿透。</li></ul>
+        <div class="metrics"><div class="metric"><b>1.12M</b><span>有效抓取数据</span></div><div class="metric"><b>5,519</b><span>物体实例</span></div><div class="metric"><b>133</b><span>物体类别</span></div><div class="metric"><b>66%</b><span>state teacher 未见类别成功率</span></div></div>
+        <h3>对 Anygrasp 的启发与区别</h3>
+        <div class="grid2"><div class="panel"><span class="tag" style="color:var(--green)">启发</span><ul><li>旋转与平移/关节角分解可缓解高维分布学习困难。</li><li>Normalizing Flow 比 CVAE 更能保留多模态抓取。</li><li>目标条件策略对不完美目标具有一定纠错能力。</li><li>State canonicalization 和 object curriculum 对跨物体训练关键。</li></ul></div><div class="panel"><span class="tag" style="color:var(--orange)">不是直接替代</span><ul><li>它解决桌面接近与抬起，而非在手中任意抓取迁移。</li><li>执行从固定上方张开姿态开始，不覆盖任意初始抓取。</li><li>数据生成采用 6,000 步能量优化，吞吐不适合 XHand 快速铺点。</li><li>只研究刚性物体，functional grasp 仍有限。</li></ul></div></div>
+      </section>
+
+      <section id="hugs">
+        <div class="kicker">08 · Paper card</div><div class="paper-head"><div class="paper-index" style="color:var(--violet);background:rgba(181,140,255,.12)">04</div><div><h3>HUGS</h3><a href="https://arxiv.org/abs/2607.04554" target="_blank" rel="noopener">Guiding Unified Dexterous Grasp Synthesis Across Modes and Scales via Learned Human Priors</a></div></div>
+        <p class="intro">不直接把人手姿态重定向给机器人，而是从少量人类抓取学习物体条件的接触模式与腕部初始化先验，再交给机器人专属的力闭合优化完成物理适配。</p>
+        <figure class="paper-figure">
+          <a href="assets/paper_figures/hugs_figure3_overview.png" target="_blank" title="点击查看 HUGS 方法总览原图"><img src="assets/paper_figures/hugs_figure3_overview.png" alt="HUGS 从人类抓取数据学习先验并引导机器人抓取生成的完整流程" loading="lazy"></a>
+          <figcaption><strong>论文原图 · Figure 3｜HUGS 方法总览。</strong>流程从少量人类抓取监督开始，学习物体条件的接触模式分布和腕姿分布；面向新物体时，先验提供模式与初始化，机器人侧优化再施加力闭合、穿透和关节限位约束，最后经仿真筛选形成大规模数据。来源：<a href="https://arxiv.org/abs/2607.04554" target="_blank" rel="noopener">HUGS, arXiv:2607.04554</a>。点击图片可查看大图。</figcaption>
+          <div class="grid3 figure-guide"><div class="panel"><h4>① 学习人类高层先验</h4><p>稀疏 3D 编码器提取物体几何；Mode Head 学接触模式分布，条件 diffusion 的 Pose Head 学对应腕部姿态分布。</p></div><div class="panel"><h4>② 为新物体提出搜索种子</h4><p>预测接触模式并采样腕姿，再将人类接触模式映射、扰动成不同机器人手型的初始化，避免全空间盲搜。</p></div><div class="panel"><h4>③ 物理优化与规模化筛选</h4><p>机器人专属优化最小化抓取能量并满足力闭合、穿透和关节限位，仿真过滤后得到可用于下游训练的数据。</p></div></div>
+        </figure>
+        <div class="formula">π(Q,T,c | o) = π(Q,T | T₀,c,o) · π(T₀ | c,o) · π(c | o)</div>
+        <div class="grid4"><div class="panel"><h4>Single-Two</h4><p>单手两指，小尺寸、接触面积有限。</p></div><div class="panel"><h4>Single-Three</h4><p>单手三指，摩擦点接触下的基本力闭合模式。</p></div><div class="panel"><h4>Single-Full</h4><p>单手全指，适合更大可接触表面。</p></div><div class="panel"><h4>Both-Full</h4><p>双手全指，面向大尺度物体。</p></div></div>
+        <h3>从 1.8K 人类抓取到 3.2M 机器人抓取</h3>
+        <div class="flow"><div class="node violet"><h4>HUGS-Human</h4><small>304 物体、525 放置、1.8K 人类抓取</small></div><div class="arrow">→</div><div class="node violet"><h4>Object-conditioned Prior</h4><small>模式分类头 + 条件 diffusion 腕姿分布</small></div><div class="arrow">→</div><div class="node violet"><h4>Robot Optimization</h4><small>按模式分配预算，力闭合与可行性优化</small></div></div>
+        <div class="metrics"><div class="metric"><b>3.2M</b><span>机器人抓取</span></div><div class="metric"><b>157K</b><span>物体场景</span></div><div class="metric"><b>2–30 cm</b><span>数据覆盖物体半对角尺度</span></div><div class="metric"><b>0.934</b><span>蒸馏模型模式预测最佳 F1</span></div></div>
+        <div class="grid2"><div class="panel"><span class="tag" style="color:var(--green)">对 XHand 的价值</span><ul><li>可学习“什么物体适合几指抓取”，替代固定 2:5:3 全局比例。</li><li>腕部初始化先验可提高有效生成率并减少反手等不自然姿态。</li><li>人类先验只做高层引导，仍由 XHand 优化器保证物理可行。</li><li>对同一物体保留多模式，适合后续接触拓扑切换。</li></ul></div><div class="panel"><span class="tag" style="color:var(--red)">局限</span><ul><li>人类数据较小，远分布物体先验可能退化。</li><li>四种粗模式不能覆盖完整 functional grasp 语义。</li><li>在线生成器仍弱于离线优化，受深度与标定误差影响。</li><li>重点是桌面跨尺度和双手，不是手内抓取流形连通性。</li></ul></div></div>
+      </section>
+
+      <section id="compare">
+        <div class="kicker">09 · Comparison</div><h2>横向比较：没有单一方法覆盖全部需求</h2>
+        <div class="tablewrap"><table><thead><tr><th>维度</th><th>Lightning Grasp</th><th>BODex</th><th>UniDexGrasp</th><th>HUGS</th></tr></thead><tbody>
+          <tr><td><strong>核心范式</strong></td><td>Contact Field 程序化搜索</td><td>双层 QP + 梯度优化</td><td>离线能量优化 + 学习提案/执行</td><td>人类先验 + 力闭合优化</td></tr>
+          <tr><td><strong>主要目标</strong></td><td>高速、多样、跨手型生成</td><td>高质量力闭合与可复现基准</td><td>点云下通用抓取和执行</td><td>跨尺度、跨接触模式生成</td></tr>
+          <tr><td><strong>质量依据</strong></td><td>接触、法向、碰撞与后处理</td><td>摩擦锥 QP、MuJoCo 六方向验证</td><td>DFC 类能量、Isaac 六方向验证</td><td>人类先验、力闭合与物理验证</td></tr>
+          <tr><td><strong>接触模式</strong></td><td>由 robot contact field 配置</td><td>人工指定指尖 contact spheres</td><td>数据中隐式学习，主要 Shadow 全手</td><td>显式两指/三指/全指/双手</td></tr>
+          <tr><td><strong>已展示手型</strong></td><td>多种手；本项目已接 XHand</td><td>Shadow / Allegro / LEAP</td><td>Shadow Hand</td><td>Shadow / LEAP，单手与双手</td></tr>
+          <tr><td><strong>公开规模</strong></td><td>方法侧重在线吞吐</td><td>4.09M floating + 3.08M tabletop</td><td>1.12M / 5,519 物体</td><td>3.2M / 157K scenes</td></tr>
+          <tr><td><strong>pre-grasp/轨迹</strong></td><td>无；本项目另做局部扩展</td><td>有 pre-grasp、squeeze 和无碰轨迹</td><td>有 goal-conditioned 执行策略</td><td>蒸馏模型预测 pregrasp/grasp/squeeze</td></tr>
+          <tr><td><strong>Anygrasp 适配</strong></td><td><strong>高：当前主生成器</strong></td><td>中：质量增强和验证</td><td>中：执行与学习框架参考</td><td>中高：拓扑和腕姿先验</td></tr>
+        </tbody></table></div>
+        <div class="callout warn"><strong>指标不可直接横比：</strong>论文使用不同手型、物体集、硬件、仿真器、接触定义和成功判据。报告中的速度与成功率用于理解方法定位，不能据此宣称跨论文绝对排名。</div>
+      </section>
+
+      <section id="hybrid">
+        <div class="kicker">10 · Recommended architecture</div><h2>推荐组合方案：把四种方法放在正确层级</h2>
+        <p class="intro">最适合 XHand Anygrasp-to-Anygrasp 的路线不是替换 Lightning Grasp，而是在其前后增加“高层模式先验”和“严格物理质量层”。</p>
+        <div class="diagram">
+          <svg viewBox="0 0 1040 430" role="img" aria-label="XHand 混合抓取数据管线" style="width:100%;height:auto">
+            <defs><marker id="b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#43c7ff"/></marker></defs>
+            <g font-family="Inter,Noto Sans SC,sans-serif" fill="#eef6fc">
+              <rect x="25" y="55" width="180" height="92" rx="14" fill="#10243a" stroke="#b58cff"/><text x="115" y="89" text-anchor="middle" font-weight="800">HUGS-style Prior</text><text x="115" y="115" text-anchor="middle" fill="#93aabd" font-size="12">π(contact topology | object)</text><text x="115" y="134" text-anchor="middle" fill="#93aabd" font-size="12">π(wrist pose | topology, object)</text>
+              <rect x="260" y="55" width="190" height="92" rx="14" fill="#10243a" stroke="#43c7ff"/><text x="355" y="89" text-anchor="middle" font-weight="800">Lightning Grasp</text><text x="355" y="115" text-anchor="middle" fill="#93aabd" font-size="12">按模式快速生成 XHand 候选</text><text x="355" y="134" text-anchor="middle" fill="#43c7ff" font-size="12">覆盖层</text>
+              <rect x="505" y="55" width="190" height="92" rx="14" fill="#10243a" stroke="#ffb44c"/><text x="600" y="89" text-anchor="middle" font-weight="800">BODex-style QP</text><text x="600" y="115" text-anchor="middle" fill="#93aabd" font-size="12">力闭合评分 / 局部精修</text><text x="600" y="134" text-anchor="middle" fill="#ffb44c" font-size="12">质量层</text>
+              <rect x="750" y="55" width="265" height="92" rx="14" fill="#10243a" stroke="#59dfae"/><text x="882" y="89" text-anchor="middle" font-weight="800">IsaacLab Dynamic Screening</text><text x="882" y="115" text-anchor="middle" fill="#93aabd" font-size="12">稳定节点 + 失败原因 + 多扰动验证</text><text x="882" y="134" text-anchor="middle" fill="#59dfae" font-size="12">物理验收层</text>
+              <path d="M205 101H250M450 101H495M695 101H740" stroke="#43c7ff" stroke-width="2" marker-end="url(#b)"/>
+              <rect x="150" y="255" width="210" height="95" rx="14" fill="#10243a" stroke="#43c7ff"/><text x="255" y="291" text-anchor="middle" font-weight="800">Reachability Graph</text><text x="255" y="317" text-anchor="middle" fill="#93aabd" font-size="12">kNN + 拓扑配额 + 动态边验证</text><text x="255" y="337" text-anchor="middle" fill="#43c7ff" font-size="12">V, E</text>
+              <rect x="415" y="255" width="210" height="95" rx="14" fill="#10243a" stroke="#59dfae"/><text x="520" y="291" text-anchor="middle" font-weight="800">Anygrasp RL</text><text x="520" y="317" text-anchor="middle" fill="#93aabd" font-size="12">目标条件策略 + 课程学习</text><text x="520" y="337" text-anchor="middle" fill="#59dfae" font-size="12">成功 rollout τ</text>
+              <rect x="680" y="255" width="210" height="95" rx="14" fill="#10243a" stroke="#b58cff"/><text x="785" y="291" text-anchor="middle" font-weight="800">DexGen Controller</text><text x="785" y="317" text-anchor="middle" fill="#93aabd" font-size="12">稳定动作先验 + 遥操作 guidance</text><text x="785" y="337" text-anchor="middle" fill="#b58cff" font-size="12">在线共享自主</text>
+              <path d="M882 147V202H255V245M360 302H405M625 302H670" fill="none" stroke="#43c7ff" stroke-width="2" marker-end="url(#b)"/>
+            </g>
+          </svg>
+        </div>
+        <h3>组合方案的核心收益</h3>
+        <div class="grid3"><div class="panel"><h4>覆盖和质量解耦</h4><p>Lightning 负责便宜地提出大量候选，QP 和仿真只对筛选后的候选投入高成本。</p></div><div class="panel"><h4>全局模式与局部流形解耦</h4><p>HUGS-style prior 决定应该搜索哪类拓扑和腕姿，局部扩展负责把状态空间铺密。</p></div><div class="panel"><h4>状态和动作解耦</h4><p>生成器构建可信节点，动态验证构建边，RL rollout 才成为真正的控制训练数据。</p></div></div>
+      </section>
+
+      <section id="roadmap">
+        <div class="kicker">11 · XHand roadmap</div><h2>XHand 落地路线图</h2>
+        <div class="timeline">
+          <div class="event"><h4>P0｜先验证现有 5,548 节点图</h4><p>在 IsaacLab 中按同拓扑、异拓扑和位姿邻近三类边抽样训练/执行局部策略，统计动态可达率。没有这一步，继续增加节点数量的收益无法判断。</p></div>
+          <div class="event"><h4>P0｜扩展到多物体并建立统一协议</h4><p>选择球形、细长工具、扁平物体和不规则物体；每个物体保存 mesh 哈希、尺度、生成参数、质量分布和筛选结果。</p></div>
+          <div class="event"><h4>P1｜引入 BODex-style 力闭合评分</h4><p>先作为离线 reranker，不立即重写生成器。比较 QP 分数与 IsaacLab 稳定性的相关性，再决定是否用于局部精修。</p></div>
+          <div class="event"><h4>P1｜学习 XHand 接触拓扑与腕姿先验</h4><p>利用人类小规模数据、现有成功抓取或二者结合，预测 3/4/5 接触和具体手指掩码，将固定全局比例升级为物体条件分配。</p></div>
+          <div class="event"><h4>P2｜训练在线点云抓取提案</h4><p>借鉴 UniDexGrasp 的旋转分解、Flow/Diffusion 和 ContactNet，使用 XHand 离线数据监督从部分点云生成候选。</p></div>
+          <div class="event"><h4>P2｜形成 Anygrasp-to-Anygrasp 轨迹库</h4><p>以动态图边做 curriculum，训练目标条件策略并持续回写边成功率，最终为 DexGen 类动作先验提供 rollout。</p></div>
+        </div>
+      </section>
+
+      <section id="evaluation">
+        <div class="kicker">12 · Evaluation protocol</div><h2>评测与验收：从姿态数量升级到图和轨迹</h2>
+        <div class="grid3"><div class="panel"><span class="tag">节点质量</span><ul class="check"><li>多方向稳定成功率</li><li>最大穿透与自穿透</li><li>接触距离一致性</li><li>力闭合/QP 分数</li><li>物体位姿和关节覆盖</li></ul></div><div class="panel"><span class="tag" style="color:var(--green)">图结构</span><ul class="check"><li>有效动态边比例</li><li>同/异拓扑边成功率</li><li>最大连通分量占比</li><li>节点度和孤立点比例</li><li>状态距离与可达性相关性</li></ul></div><div class="panel"><span class="tag" style="color:var(--violet)">RL 与下游</span><ul class="check"><li>目标抓取到达率</li><li>连续切换目标数量</li><li>Time-to-fall</li><li>单位 GPU 小时成功 rollout</li><li>DexGen 辅助遥操作增益</li></ul></div></div>
+        <div class="callout green"><strong>建议主验收指标：</strong>固定计算预算下，最终获得多少“动态稳定节点—可达边—成功轨迹”，而不是单看原始候选数或某个几何能量。</div>
+      </section>
+
+      <section id="conclusion">
+        <div class="kicker">13 · Conclusion</div><h2>结论与技术选择</h2>
+        <div class="panel"><ol>
+          <li><strong>Lightning Grasp 仍是当前 XHand 主线的正确选择。</strong>它已经接入且吞吐高，适合 Anygrasp 状态空间覆盖。</li>
+          <li><strong>BODex 最值得借鉴的是质量层，而非立即替换生成层。</strong>先验证 QP 分数对 IsaacLab 稳定性的增益。</li>
+          <li><strong>UniDexGrasp 的关键价值在“数据 → 在线提案 → 目标执行”链路。</strong>但它的桌面抓取执行不是 Anygrasp-to-Anygrasp。</li>
+          <li><strong>HUGS 指出了下一步提升多样性的方向。</strong>用物体条件先验选择接触拓扑和腕姿，比固定比例与随机初始化更合理。</li>
+          <li><strong>真正的数据产品应包含 V、E 和 τ。</strong>稳定抓取节点只是第一层，动态可达边和成功迁移轨迹才直接服务 DexGen。</li>
+        </ol></div>
+        <h3>论文来源</h3>
+        <ul><li><a href="https://arxiv.org/abs/2511.07418" target="_blank" rel="noopener">Lightning Grasp: High Performance Procedural Grasp Synthesis with Contact Fields</a></li><li><a href="https://arxiv.org/abs/2412.16490" target="_blank" rel="noopener">BODex: Scalable and Efficient Robotic Dexterous Grasp Synthesis Using Bilevel Optimization</a></li><li><a href="https://arxiv.org/abs/2303.00938" target="_blank" rel="noopener">UniDexGrasp: Universal Robotic Dexterous Grasping via Learning Diverse Proposal Generation and Goal-Conditioned Policy</a></li><li><a href="https://arxiv.org/abs/2607.04554" target="_blank" rel="noopener">HUGS: Guiding Unified Dexterous Grasp Synthesis Across Modes and Scales via Learned Human Priors</a></li><li><a href="https://arxiv.org/abs/2502.04307" target="_blank" rel="noopener">DexterityGen: Foundation Controller for Unprecedented Dexterity</a></li></ul>
+        <p class="muted">数据与指标均以论文当前 arXiv 版本和本项目现有 XHand 结果为依据。跨论文硬件、物体集、仿真器和成功定义不同，报告避免做未经统一基准的绝对性能排名。</p>
+      </section>
+    </main>
+  </div>
+  <footer><div class="shell">灵巧手灵巧操作调研与交接资料 · 技术主线 02 · 2026-08-11</div></footer>
+  <script>const ss=[...document.querySelectorAll('main section[id]')],ls=[...document.querySelectorAll('.toc a')],map=Object.fromEntries(ls.map(a=>[a.getAttribute('href').slice(1),a]));const obs=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){ls.forEach(a=>a.classList.remove('active'));map[e.target.id]?.classList.add('active')}}),{rootMargin:'-20% 0px -70% 0px'});ss.forEach(s=>obs.observe(s));</script>
+</body>
+</html>
